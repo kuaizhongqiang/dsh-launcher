@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -81,6 +82,9 @@ type uiState struct {
 
 	logCh chan string // 日志行队列（后台 → UI 线程）
 	logCount int     // 日志框当前行数（限行用）
+	lastHoverPaint time.Time // hover 重绘限流（UI 线程）
+	painting  atomic.Bool // WM_PAINT 防重入
+	lastMsg   atomic.Uint32 // 最后处理的窗口消息（卡死诊断）
 	unsub     func()
 	hb        atomic.Int64 // UI 线程心跳（UnixNano），看门狗用
 	modal     atomic.Bool  // 模态对话框（浏览目录）进行中，看门狗豁免
@@ -94,20 +98,24 @@ const maxLogLines = 600
 
 // watchdog 后台看门狗：UI 线程心跳停滞（卡死）超过 30 秒 → 自动退出；
 // 模态对话框期间豁免，但超过 60 秒（目录框卡死）也退出。
+// 触发时 dump goroutine 栈，帮助定位卡点。
 func (u *uiState) watchdog() {
 	for {
 		time.Sleep(3 * time.Second)
 		if u.modal.Load() {
 			from := time.Unix(0, u.modalFrom.Load())
 			if time.Since(from) > 60*time.Second {
-				log.Error("目录选择框无响应超过 60 秒，自动退出")
+				log.Error("目录选择框无响应超过 60 秒，自动退出。最后处理消息 %#x", u.lastMsg.Load())
 				os.Exit(1)
 			}
 			continue
 		}
 		last := time.Unix(0, u.hb.Load())
 		if time.Since(last) > 30*time.Second {
-			log.Error("UI 线程无响应超过 30 秒，自动退出")
+			buf := make([]byte, 64*1024)
+			n := runtime.Stack(buf, true)
+			log.Error("UI 线程无响应超过 30 秒，自动退出。最后处理消息 %#x。goroutine 栈：\n%s",
+				u.lastMsg.Load(), buf[:n])
 			os.Exit(1)
 		}
 	}
@@ -271,6 +279,14 @@ func wndProcGo(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr 
 func (u *uiState) wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
 	// 任何消息处理都视为 UI 线程存活（看门狗心跳）
 	u.hb.Store(time.Now().UnixNano())
+	u.lastMsg.Store(msg)
+	// 慢消息诊断：处理超过 500ms 记录警告（帮助定位卡点）
+	start := time.Now()
+	defer func() {
+		if d := time.Since(start); d > 500*time.Millisecond {
+			log.Warn("UI: 消息 %#x 处理耗时 %v", msg, d)
+		}
+	}()
 	switch msg {
 	case wmTimer:
 		return 0
@@ -468,7 +484,13 @@ func (u *uiState) onMouseMove(lParam uintptr) {
 			pTrackMouseEvent.Call(uintptr(unsafe.Pointer(&tme)))
 			pSetCursor.Call(uintptr(u.cursorHand))
 		}
-		u.invalidateAll()
+		// 重绘限流：鼠标在按钮边缘抖动会高频触发 hover 变化，
+		// 全窗口重绘风暴会拖死 UI 线程。80ms 内只重绘一次。
+		now := time.Now()
+		if now.Sub(u.lastHoverPaint) >= 80*time.Millisecond {
+			u.lastHoverPaint = now
+			u.invalidateAll()
+		}
 	}
 }
 

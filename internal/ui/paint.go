@@ -18,6 +18,11 @@ const (
 func (u *uiState) onPaint() {
 	log.Debug("UI: WM_PAINT enter")
 	defer log.Debug("UI: WM_PAINT leave")
+	// 防重入：若正在绘制（如绘制中触发了新的 WM_PAINT），跳过本次
+	if !u.painting.CompareAndSwap(false, true) {
+		return
+	}
+	defer u.painting.Store(false)
 	var ps paintStruct
 	hdc, _, _ := pBeginPaint.Call(uintptr(u.hwnd), uintptr(unsafe.Pointer(&ps)))
 	if hdc == 0 {
