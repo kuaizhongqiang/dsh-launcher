@@ -53,7 +53,7 @@ func Move(newDir string) error {
 			return fmt.Errorf("无法读取目标目录：%s", newAbs)
 		}
 		if len(entries) > 0 {
-			return fmt.Errorf("目标目录已存在且非空：%s", newAbs)
+			return fmt.Errorf("目标目录已存在且非空：%s（可能是上次移动中断的残留，请先删除该目录后再试）", newAbs)
 		}
 	}
 	// 运行中禁止移动（端口有响应即拒绝；报错说明可能是其他服务）

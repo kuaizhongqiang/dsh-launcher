@@ -85,8 +85,10 @@ type uiState struct {
 	lastHoverPaint time.Time // hover 重绘限流（UI 线程）
 	painting  atomic.Bool // WM_PAINT 防重入
 	lastMsg   atomic.Uint32 // 最后处理的窗口消息（卡死诊断）
+	inMsg     atomic.Int64 // 消息处理开始时间戳（0=不在处理中），看门狗用
+	quit      atomic.Bool // 消息循环退出标志（closeApp 直接 os.Exit，正常不会走到）
 	unsub     func()
-	hb        atomic.Int64 // UI 线程心跳（UnixNano），看门狗用
+	hb        atomic.Int64 // 兼容保留（不再用于看门狗判定）
 	modal     atomic.Bool  // 模态对话框（浏览目录）进行中，看门狗豁免
 	modalFrom atomic.Int64 // 模态开始时间（UnixNano），超时兜底
 }
@@ -96,8 +98,9 @@ const wmTimer = 0x0113
 // maxLogLines 日志框最多保留的行数（超出清空，避免长文本拖慢编辑框）。
 const maxLogLines = 600
 
-// watchdog 后台看门狗：UI 线程心跳停滞（卡死）超过 30 秒 → 自动退出；
-// 模态对话框期间豁免，但超过 60 秒（目录框卡死）也退出。
+// watchdog 后台看门狗：检测"单条消息处理耗时"——窗口过程卡住（inMsg 停留）
+// 超过 30 秒 → 自动退出；模态对话框期间豁免，但超过 60 秒（目录框卡死）也退出。
+// 闲置（GetMessage 阻塞）inMsg 为 0，不会误判。
 // 触发时 dump goroutine 栈，帮助定位卡点。
 func (u *uiState) watchdog() {
 	for {
@@ -110,13 +113,14 @@ func (u *uiState) watchdog() {
 			}
 			continue
 		}
-		last := time.Unix(0, u.hb.Load())
-		if time.Since(last) > 30*time.Second {
-			buf := make([]byte, 64*1024)
-			n := runtime.Stack(buf, true)
-			log.Error("UI 线程无响应超过 30 秒，自动退出。最后处理消息 %#x。goroutine 栈：\n%s",
-				u.lastMsg.Load(), buf[:n])
-			os.Exit(1)
+		if t := u.inMsg.Load(); t != 0 {
+			if time.Since(time.Unix(0, t)) > 30*time.Second {
+				buf := make([]byte, 64*1024)
+				n := runtime.Stack(buf, true)
+				log.Error("窗口消息处理卡住超过 30 秒，自动退出。最后处理消息 %#x。goroutine 栈：\n%s",
+					u.lastMsg.Load(), buf[:n])
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -219,6 +223,9 @@ func Run() int {
 	pShowWindow.Call(hwnd, swShow)
 	pUpdateWindow.Call(hwnd)
 
+	// 消息循环：GetMessage 阻塞等待消息（闲置时阻塞是正常的，不是卡死）。
+	// 看门狗检测的是"单条消息处理耗时"（inMsg），而不是心跳——
+	// 心跳在闲置时会停，会把"正常闲置"误判为"卡死"。
 	var m msg
 	for {
 		ret, _, _ := pGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
@@ -232,7 +239,7 @@ func Run() int {
 		u.unsub()
 	}
 	u.destroyResources()
-	return int(m.wParam)
+	return 0
 }
 
 func loadArrow() syscall.Handle {
@@ -277,9 +284,10 @@ func wndProcGo(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr 
 }
 
 func (u *uiState) wndProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
-	// 任何消息处理都视为 UI 线程存活（看门狗心跳）
-	u.hb.Store(time.Now().UnixNano())
+	// 记录消息处理开始（看门狗：处理卡住超过 30 秒判定卡死）
 	u.lastMsg.Store(msg)
+	u.inMsg.Store(time.Now().UnixNano())
+	defer u.inMsg.Store(0)
 	// 慢消息诊断：处理超过 500ms 记录警告（帮助定位卡点）
 	start := time.Now()
 	defer func() {
@@ -548,6 +556,7 @@ func (u *uiState) closeApp() {
 	if u.running.Load() {
 		log.Info("dsh 仍在后台运行（独立进程）。需要停止时请用「停止」按钮或 stop 命令。")
 	}
+	u.quit.Store(true)
 	os.Exit(0)
 }
 
