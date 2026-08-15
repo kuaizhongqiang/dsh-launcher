@@ -1,0 +1,162 @@
+// dsh-launcher：本机原生 dsh（@deepseek-ai/dsh，npm 版）的安装 + 启动引导器。
+// 子命令：install / start（默认）/ status / --help。
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"dsh-launcher/internal/config"
+	"dsh-launcher/internal/install"
+	"dsh-launcher/internal/launch"
+	"dsh-launcher/internal/log"
+	"dsh-launcher/internal/node"
+	"dsh-launcher/internal/ui"
+	"dsh-launcher/internal/win"
+)
+
+const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
+
+用法：
+  dsh-launcher.exe                  无参数（双击）→ 打开图形界面：
+                                     状态展示 + 路径选择 + 安装 + 一键启动
+  dsh-launcher.exe install [--dir <目录>]   命令行安装 @deepseek-ai/dsh
+                                            默认安装目录 %LOCALAPPDATA%\dsh，
+                                            --dir 可覆盖（例如 D:\Tools\dsh）
+  dsh-launcher.exe start [--no-browser]     命令行启动 dsh web（日志到文件）
+  dsh-launcher.exe status                   显示安装目录、版本与运行状态
+  dsh-launcher.exe --version | -v           显示版本
+  dsh-launcher.exe --help | -h              显示本帮助
+
+说明：
+  - 配置 launcher.json 与 exe 同目录，跟随 exe 走（便携）
+  - 运行日志写入 %TEMP%\dsh-launcher.log（windowsgui 版无控制台输出，以此为准）
+  - GUI 里「启动」后，关闭窗口即同时结束 dsh 进程（Job Object 兜底回收）
+`
+
+// guiBuild 由正式构建通过 -ldflags "-X main.guiBuild=1" 注入（配合 -H windowsgui）。
+// 为 "1" 时，致命错误以 MessageBox 弹窗提示（双击场景无控制台可见）。
+var guiBuild = "0"
+
+// version 由构建注入：-ldflags "-X main.version=v0.0.1"；本地开发为 "dev"。
+var version = "dev"
+
+func main() {
+	_ = log.Init() // 失败仅降级为控制台输出
+	log.SetDebug(os.Getenv("DSH_LAUNCHER_DEBUG") != "")
+
+	args := os.Args[1:]
+	if len(args) == 0 {
+		// 无参数（双击 exe）→ 图形界面：状态展示 + 路径选择 + 安装 + 一键启动
+		os.Exit(ui.Run())
+		return
+	}
+
+	switch args[0] {
+	case "--help", "-h", "help":
+		log.Raw(usage)
+	case "--version", "-v":
+		log.Raw("dsh-launcher " + version + "\n")
+	case "install":
+		runInstall(args[1:])
+	case "start":
+		runStart(args[1:])
+	case "status":
+		runStatus()
+	default:
+		log.Raw(usage)
+		log.Error("未知命令：%s", args[0])
+		os.Exit(2)
+	}
+}
+
+// runInstall 处理 install 子命令。
+func runInstall(rest []string) {
+	dir := ""
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--dir", "-d":
+			if i+1 >= len(rest) {
+				fail("--dir 缺少参数")
+			}
+			i++
+			dir = rest[i]
+		default:
+			log.Raw(usage)
+			fail("install 未知参数：%s", rest[i])
+		}
+	}
+	if err := install.Run(dir); err != nil {
+		fail("安装失败：%v", err)
+	}
+	log.Info("安装完成。现在可以运行 dsh-launcher.exe（或 dsh-launcher.exe start）启动 dsh。")
+}
+
+// runStart 处理 start 子命令（默认）。
+func runStart(rest []string) {
+	noBrowser := false
+	for _, a := range rest {
+		switch a {
+		case "--no-browser":
+			noBrowser = true
+		default:
+			log.Raw(usage)
+			fail("start 未知参数：%s", a)
+		}
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		if os.IsNotExist(err) {
+			fail("未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装")
+		}
+		fail("读取配置失败：%v", err)
+	}
+	if err := launch.Start(cfg, noBrowser); err != nil {
+		fail("启动失败：%v", err)
+	}
+}
+
+// runStatus 处理 status 子命令。
+func runStatus() {
+	cfg, err := config.Load()
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Info("状态：未安装（缺少 launcher.json）")
+			log.Info("请先运行：dsh-launcher.exe install")
+			return
+		}
+		fail("读取配置失败：%v", err)
+	}
+	if !cfg.IsInstalled() {
+		log.Info("状态：未安装（launcher.json 中未记录安装目录）")
+		log.Info("请先运行：dsh-launcher.exe install")
+		return
+	}
+
+	log.Info("安装目录：%s", cfg.DshInstallDir)
+	log.Info("dsh 版本：%s", cfg.DshVersion)
+	log.Info("端口：%d", cfg.Port)
+	log.Info("安装时间：%s", cfg.InstalledAt.Format("2006-01-02 15:04:05 -07:00"))
+
+	bin := node.DshBinPath(cfg.DshInstallDir)
+	if _, err := os.Stat(bin); err != nil {
+		log.Info("运行状态：未就绪（找不到 %s，安装可能损坏，请重新 install）", bin)
+		return
+	}
+	if launch.IsRunning(cfg) {
+		log.Info("运行状态：运行中（端口 %d 有响应）", cfg.Port)
+	} else {
+		log.Info("运行状态：未运行（端口 %d 无响应）", cfg.Port)
+	}
+}
+
+// fail 记录错误；GUI 正式版（guiBuild=1）额外弹错误框，随后以退出码 1 结束。
+func fail(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	log.Error("%s", msg)
+	if guiBuild == "1" {
+		win.MessageBox("dsh-launcher 错误", msg)
+	}
+	os.Exit(1)
+}

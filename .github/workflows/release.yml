@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build dsh-launcher.exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install rsrc (icon/manifest resource tool)
+        shell: pwsh
+        run: go install github.com/akavel/rsrc@v0.10.2
+
+      - name: Generate embedded resources (rsrc.syso)
+        shell: pwsh
+        run: |
+          $rsrc = Join-Path (go env GOPATH) "bin\rsrc.exe"
+          & $rsrc -ico icon.ico -manifest app.manifest -o rsrc.syso
+          Get-Item rsrc.syso | Select-Object Name, Length
+
+      - name: Build (windowsgui, version from tag)
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}"
+          go build -ldflags "-s -w -H windowsgui -X main.guiBuild=1 -X main.version=$ver" -o dsh-launcher.exe .
+          Get-Item dsh-launcher.exe | Select-Object Name, Length
+
+      - name: Smoke test --version and --help
+        shell: pwsh
+        run: |
+          .\dsh-launcher.exe --version
+          .\dsh-launcher.exe --help | Select-Object -First 3
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-launcher-${{ github.ref_name }}
+          path: dsh-launcher.exe
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dsh-launcher.exe
+          generate_release_notes: true
+          fail_on_unmatched_files: true

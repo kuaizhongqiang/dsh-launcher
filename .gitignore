@@ -1,0 +1,16 @@
+# 构建产物
+dsh-launcher.exe
+dsh-launcher-debug.exe
+*.exe
+
+# 运行期配置（install 生成，跟随 exe）
+launcher.json
+
+# 资源文件（CI / build.ps1 用 rsrc 生成）
+rsrc.syso
+
+# 工具输出
+preview.png
+
+# 测试目录
+.test/
