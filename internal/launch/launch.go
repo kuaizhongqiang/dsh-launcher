@@ -1,6 +1,8 @@
-// Package launch 实现 dsh 的启动与生命周期管理：
-//   - Spawn/Ready/Stop/Wait：供 GUI 精细控制（启动→就绪→运行中→停止）
-//   - Start：命令行完整流程（Spawn + Ready + 打开浏览器 + 信号等待）
+// Package launch 实现 dsh 的启动与停止。
+//
+// 生命周期设计（v0.1.0 起）：dsh server 以独立进程运行，**不绑定启动器**。
+// 启动器（GUI/CLI）负责：确保 dsh 运行 → 打开浏览器 → 退出（dsh 继续服务）。
+// 停止 dsh 通过按端口定位进程并结束（stop 命令 / GUI「停止」按钮）。
 package launch
 
 import (
@@ -9,10 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -33,26 +34,15 @@ func ChildLogPath() string {
 	return filepath.Join(os.TempDir(), "dsh-launcher-child.log")
 }
 
-// Server 表示一个已启动的 dsh 子进程。
-type Server struct {
-	cfg       *config.Config
-	cmd       *exec.Cmd
-	job       *win.Job
-	childLog  *os.File
-	done      chan error
-	stoppedCh chan struct{}
-	stopOnce  sync.Once
-}
-
-// URL 返回本服务监听地址。
-func (s *Server) URL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d/", s.cfg.Port)
+// URL 返回配置端口对应的访问地址。
+func URL(cfg *config.Config) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/", cfg.Port)
 }
 
 // VerifyInstall 校验配置中的安装目录可用（bin.js 存在且可执行）。
 func VerifyInstall(cfg *config.Config) error {
 	if !cfg.IsInstalled() {
-		return errors.New("未检测到已安装的 dsh：请先安装（GUI 中点击「启动」或「安装」）")
+		return errors.New("未检测到已安装的 dsh：请先安装")
 	}
 	bin := node.DshBinPath(cfg.DshInstallDir)
 	if _, err := os.Stat(bin); err != nil {
@@ -76,140 +66,124 @@ func VerifyInstall(cfg *config.Config) error {
 	return nil
 }
 
-// Spawn 校验配置并启动 dsh 子进程（不等待就绪）。
-// 返回的 Server 必须由调用方在退出前 Stop（或让其自然退出后 Wait）。
-func Spawn(cfg *config.Config) (*Server, error) {
+// StartDetached 确保 dsh 运行（独立进程，不绑定本进程生命周期）：
+//   - dsh 已在运行（端口有响应）→ 不重复启动，直接打开浏览器，返回 alreadyRunning=true
+//   - 未运行 → 启动 dsh 子进程（无 Job Object、不回收），就绪后 detach 并打开浏览器
+func StartDetached(cfg *config.Config, noBrowser bool) (alreadyRunning bool, err error) {
 	if err := VerifyInstall(cfg); err != nil {
-		return nil, err
+		return false, err
 	}
+	url := URL(cfg)
+
+	if IsRunning(cfg) {
+		log.Info("dsh 已在运行：%s", url)
+		if !noBrowser {
+			if berr := win.OpenURL(url); berr != nil {
+				log.Warn("打开浏览器失败：%v（可手动访问 %s）", berr, url)
+			} else {
+				log.Info("已在默认浏览器打开 %s", url)
+			}
+		}
+		return true, nil
+	}
+
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
-		return nil, errors.New("未找到 Node.js：请先安装 Node.js（https://nodejs.org）")
+		return false, errors.New("未找到 Node.js：请先安装 Node.js（https://nodejs.org）")
 	}
 	bin := node.DshBinPath(cfg.DshInstallDir)
 
 	// 子进程输出写入日志文件（windowsgui 无控制台，绝不能继承无效句柄）。
 	childLog, err := os.OpenFile(ChildLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return nil, fmt.Errorf("无法打开子进程日志：%w", err)
+		return false, fmt.Errorf("无法打开子进程日志：%w", err)
 	}
 
 	cmd := exec.Command(nodePath, bin, "web")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW：禁止子进程弹控制台
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
 	cmd.Stdout = childLog
 	cmd.Stderr = childLog
 	if err := cmd.Start(); err != nil {
 		childLog.Close()
-		return nil, fmt.Errorf("启动 dsh 失败：%w", err)
+		return false, fmt.Errorf("启动 dsh 失败：%w", err)
 	}
 	log.Info("dsh 子进程已启动（PID %d）：%s %s web", cmd.Process.Pid, nodePath, bin)
+	// 注意：不创建 Job Object、不 Kill——dsh 独立运行，本进程退出不影响它。
 
-	srv := &Server{
-		cfg:       cfg,
-		cmd:       cmd,
-		childLog:  childLog,
-		done:      make(chan error, 1),
-		stoppedCh: make(chan struct{}),
-	}
-	go func() { srv.done <- cmd.Wait() }()
-
-	// Job Object：启动器被强制结束（Task Manager）时同样回收子进程。
-	if job, jerr := win.NewKillOnCloseJob(); jerr != nil {
-		log.Warn("创建 Job Object 失败（%v），进程回收依赖正常退出路径", jerr)
-	} else {
-		srv.job = job
-		if aerr := job.AssignPID(uint32(cmd.Process.Pid)); aerr != nil {
-			log.Warn("子进程加入 Job Object 失败：%v", aerr)
-		} else {
-			log.Debug("子进程已加入 KILL_ON_JOB_CLOSE Job Object")
-		}
-	}
-	return srv, nil
-}
-
-// Ready 阻塞直到端口就绪 / 子进程退出 / 被停止 / 超时。
-func (s *Server) Ready() error {
-	url := s.URL()
+	// 等待就绪
 	log.Info("等待 %s 就绪（超时 %s）……", url, readyTimeout)
 	select {
 	case <-waitReady(url):
 		log.Info("%s 已就绪", url)
-		return nil
-	case err := <-s.done:
-		return fmt.Errorf("dsh 进程提前退出（%v），子进程日志：%s", err, ChildLogPath())
-	case <-s.stoppedCh:
-		return errors.New("已停止等待就绪")
 	case <-time.After(readyTimeout):
-		return fmt.Errorf("等待 %s 超时（%s），子进程日志：%s", url, readyTimeout, ChildLogPath())
+		childLog.Close()
+		return false, fmt.Errorf("等待 %s 超时（%s），子进程日志：%s", url, readyTimeout, ChildLogPath())
 	}
-}
 
-// OpenBrowser 打开默认浏览器（noBrowser 为 true 时跳过）。
-func (s *Server) OpenBrowser(noBrowser bool) {
-	url := s.URL()
-	if noBrowser {
-		log.Info("已跳过打开浏览器（--no-browser），请手动访问 %s", url)
-		return
-	}
-	if err := win.OpenURL(url); err != nil {
-		log.Warn("打开浏览器失败：%v（可手动访问 %s）", err, url)
-	} else {
-		log.Info("已在默认浏览器打开 %s", url)
-	}
-}
-
-// Wait 返回子进程退出结果（阻塞直到子进程结束）。
-func (s *Server) Wait() error {
-	return <-s.done
-}
-
-// Stop 结束子进程并关闭 Job Object（幂等）。强制结束 launcher 时由 Job 兜底回收。
-func (s *Server) Stop() {
-	s.stopOnce.Do(func() {
-		close(s.stoppedCh)
-		if s.cmd != nil && s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
-		}
-		if s.job != nil {
-			s.job.Close()
-		}
-		if s.childLog != nil {
-			_ = s.childLog.Close()
-		}
-	})
-}
-
-// Start 命令行完整流程：Spawn + Ready + 浏览器 + 前台等待。
-func Start(cfg *config.Config, noBrowser bool) error {
-	srv, err := Spawn(cfg)
-	if err != nil {
-		return err
-	}
-	defer srv.Stop()
-	if err := srv.Ready(); err != nil {
-		return err
-	}
-	srv.OpenBrowser(noBrowser)
-	log.Info("dsh 正在运行（%s）。结束本程序（Task Manager / Ctrl+C）将同时结束 dsh 进程。", srv.URL())
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
-	select {
-	case err := <-srv.done:
-		if err == nil {
-			log.Info("dsh 进程已退出")
+	if !noBrowser {
+		if berr := win.OpenURL(url); berr != nil {
+			log.Warn("打开浏览器失败：%v（可手动访问 %s）", berr, url)
 		} else {
-			log.Info("dsh 进程已退出：%v", err)
+			log.Info("已在默认浏览器打开 %s", url)
 		}
-		return nil
-	case <-sigCh:
-		log.Info("收到退出信号，正在结束 dsh 子进程……")
-		srv.Stop()
-		<-srv.done
+	}
+
+	// detach：解除关联，dsh 独立运行
+	if rerr := cmd.Process.Release(); rerr != nil {
+		log.Warn("解除子进程关联失败：%v", rerr)
+	}
+	childLog.Close()
+	log.Info("dsh 已启动并独立运行：%s（关闭本程序不影响 dsh，可用 stop 停止）", url)
+	return false, nil
+}
+
+// Stop 结束配置端口上的 dsh 进程（按端口定位 PID 并强制结束）。
+func Stop(cfg *config.Config) error {
+	pids := findPIDsByPort(cfg.Port)
+	if len(pids) == 0 {
+		return fmt.Errorf("端口 %d 上没有监听中的进程，dsh 可能未在运行", cfg.Port)
+	}
+	for _, pid := range pids {
+		log.Info("结束进程 PID %d……", pid)
+		if err := killPID(pid); err != nil {
+			log.Warn("结束 PID %d 失败：%v", pid, err)
+		}
+	}
+	return nil
+}
+
+// findPIDsByPort 用 netstat 找监听端口的 PID。
+func findPIDsByPort(port int) []int {
+	out, err := node.RunNoWindow("netstat", "-ano")
+	if err != nil {
+		log.Warn("netstat 执行失败：%v", err)
 		return nil
 	}
+	marker := fmt.Sprintf(":%d", port)
+	var pids []int
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, marker) || !strings.Contains(line, "LISTENING") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[len(fields)-1])
+		if err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// killPID 强制结束进程（taskkill /F）。
+func killPID(pid int) error {
+	out, err := node.RunNoWindow("taskkill", "/F", "/PID", strconv.Itoa(pid))
+	if err != nil {
+		return fmt.Errorf("taskkill 失败：%s", strings.TrimSpace(out))
+	}
+	return nil
 }
 
 // waitReady 轮询 url 直到有 HTTP 响应。
@@ -231,11 +205,10 @@ func waitReady(url string) <-chan struct{} {
 	return ch
 }
 
-// IsRunning 报告配置端口当前是否有服务响应（用于 status）。
+// IsRunning 报告配置端口当前是否有服务响应。
 func IsRunning(cfg *config.Config) bool {
-	url := fmt.Sprintf("http://127.0.0.1:%d/", cfg.Port)
 	client := &http.Client{Timeout: httpTimeout}
-	resp, err := client.Get(url)
+	resp, err := client.Get(URL(cfg))
 	if err != nil {
 		return false
 	}

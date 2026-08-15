@@ -117,6 +117,14 @@ func RunScript(nodePath, script string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// RunNoWindow 执行任意命令（CREATE_NO_WINDOW，无控制台窗口），返回合并输出。
+// 用于 netstat / taskkill 等系统命令。
+func RunNoWindow(name string, args ...string) (string, error) {
+	cmd := noWindow(exec.Command(name, args...))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 // DshBinPath 返回安装目录中 dsh 的 bin.js 路径。
 func DshBinPath(installDir string) string {
 	return filepath.Join(installDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")

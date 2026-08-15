@@ -35,9 +35,9 @@ func (u *uiState) onInstall() {
 	}()
 }
 
-// onStart：点击「启动」。未安装 → 选路径 → 安装 → 自动启动。
+// onStart：点击「启动」——确保 dsh 运行（已在运行则直接打开浏览器；未安装则引导安装）。
 func (u *uiState) onStart() {
-	if u.isBusy() || u.isRunning() {
+	if u.isBusy() {
 		return
 	}
 	cfg, err := config.Load()
@@ -46,9 +46,20 @@ func (u *uiState) onStart() {
 			u.setBusy(true)
 			u.invalidateAll()
 			go func() {
-				u.startOnly(cfg)
-				u.setBusy(false)
-				postMessage(u.hwnd, msgRefresh, 0, 0)
+				defer func() {
+					u.setBusy(false)
+					postMessage(u.hwnd, msgRefresh, 0, 0)
+				}()
+				already, serr := launch.StartDetached(cfg, noBrowser())
+				if serr != nil {
+					log.Error("启动失败：%v", serr)
+					return
+				}
+				if already {
+					log.Info("dsh 已在运行。")
+				} else {
+					log.Info("dsh 已启动并独立运行（关闭本窗口不影响 dsh）。")
+				}
 			}()
 			return
 		}
@@ -77,7 +88,41 @@ func (u *uiState) onStart() {
 			log.Error("安装后读取配置失败：%v", err)
 			return
 		}
-		u.startOnly(cfg)
+		already, serr := launch.StartDetached(cfg, noBrowser())
+		if serr != nil {
+			log.Error("启动失败：%v", serr)
+			return
+		}
+		if already {
+			log.Info("dsh 已在运行。")
+		} else {
+			log.Info("dsh 已启动并独立运行（关闭本窗口不影响 dsh）。")
+		}
+	}()
+}
+
+// onStop：点击「停止」按钮——结束端口上的 dsh 进程。
+func (u *uiState) onStop() {
+	if u.isBusy() {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil || !cfg.IsInstalled() {
+		log.Warn("尚未安装 dsh。")
+		return
+	}
+	u.setBusy(true)
+	u.invalidateAll()
+	go func() {
+		defer func() {
+			u.setBusy(false)
+			postMessage(u.hwnd, msgRefresh, 0, 0)
+		}()
+		if err := launch.Stop(cfg); err != nil {
+			log.Error("停止失败：%v", err)
+			return
+		}
+		log.Info("已停止 dsh（端口 %d 的进程已结束）。", cfg.Port)
 	}()
 }
 
@@ -91,15 +136,7 @@ func (u *uiState) onMove() {
 		log.Warn("尚未安装 dsh，无需移动。请先点「安装」或「启动」。")
 		return
 	}
-	// 运行中禁止移动：仅检查本 launcher 启动的 dsh 子进程
-	//（不用端口检测——3080 可能被其他 dsh 实例占用，误判会让用户无法移动）
-	u.mu.Lock()
-	srv := u.server
-	u.mu.Unlock()
-	if srv != nil {
-		log.Warn("dsh 正在运行，请先停止（关闭窗口 / 退出）后再移动。")
-		return
-	}
+	// 运行中禁止移动（独立进程的 dsh 由 install.Move 按端口检测拒绝）
 	dir := browseFolder(u.hwnd)
 	if dir == "" {
 		return // 用户取消
@@ -122,33 +159,4 @@ func (u *uiState) onMove() {
 // noBrowser 返回是否跳过打开浏览器（环境变量 DSH_LAUNCHER_NO_BROWSER=1，供测试/无头场景）。
 func noBrowser() bool {
 	return os.Getenv("DSH_LAUNCHER_NO_BROWSER") != ""
-}
-
-// startOnly：启动 dsh 并等待就绪（在 goroutine 中调用）。
-func (u *uiState) startOnly(cfg *config.Config) {
-	srv, err := launch.Spawn(cfg)
-	if err != nil {
-		log.Error("启动失败：%v", err)
-		return
-	}
-	u.setServer(srv)
-	if err := srv.Ready(); err != nil {
-		log.Error("启动失败：%v", err)
-		srv.Stop()
-		u.setServer(nil)
-		return
-	}
-	srv.OpenBrowser(noBrowser())
-	u.setRunning(true)
-	log.Info("dsh 运行中：%s。关闭本窗口将结束 dsh。", srv.URL())
-	postMessage(u.hwnd, msgRefresh, 0, 0)
-
-	// 子进程退出时同步状态
-	go func() {
-		_ = srv.Wait()
-		log.Warn("dsh 进程已退出")
-		u.setServer(nil)
-		u.setRunning(false)
-		postMessage(u.hwnd, msgRefresh, 0, 0)
-	}()
 }

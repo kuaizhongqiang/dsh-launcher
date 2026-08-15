@@ -71,6 +71,7 @@ func (u *uiState) paintAll(hdc syscall.Handle, w, h int32) {
 	u.paintButton(hdc, &L.install, u.buttons[btnInstall], "安装", styleSec)
 	u.paintButton(hdc, &L.move, u.buttons[btnMove], "移动", styleSec)
 	u.paintButton(hdc, &L.startBtn, u.buttons[btnStart], u.startLabel(), stylePrimary)
+	u.paintButton(hdc, &L.stopBtn, u.buttons[btnStop], "停止", styleSec)
 	u.paintButton(hdc, &L.exitBtn, u.buttons[btnExit], "退出", styleSec)
 	u.paintButton(hdc, &L.closeBtn, u.buttons[btnClose], "×", styleClose)
 }
@@ -149,7 +150,7 @@ const (
 
 func (u *uiState) startLabel() string {
 	if u.isRunning() {
-		return "运行中"
+		return "已运行"
 	}
 	return "启动"
 }
@@ -157,7 +158,9 @@ func (u *uiState) startLabel() string {
 func (u *uiState) btnDisabled(k btnKind) bool {
 	switch k {
 	case btnStart:
-		return u.isBusy() || u.isRunning()
+		return u.isBusy()
+	case btnStop:
+		return u.isBusy() || !u.isRunning()
 	case btnInstall, btnBrowse, btnMove:
 		return u.isBusy()
 	}

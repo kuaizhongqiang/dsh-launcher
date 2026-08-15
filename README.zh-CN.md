@@ -20,11 +20,12 @@
 
 - 🖥️ **dsh 风格深色 GUI** — 主题色取自 dsh web 界面（背景 `#151517`、品牌蓝 `#5686FE`、12px 圆角）
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
+- 🕊️ **独立运行** — dsh 以独立进程运行，关闭启动器窗口**不会**停止 dsh；再次点启动（已在运行）只是重新打开浏览器
+- 🛑 **停止 dsh** — 按配置端口定位进程并结束（GUI「停止」按钮 / `stop` 命令）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
 - 📜 **实时日志** — 安装与启动输出实时显示在窗口内
-- 🧹 **干净的生命周期** — 关闭窗口即停止 dsh；Windows Job Object 兜底回收，即使被强制结束也不留孤儿进程
-- ⌨️ **命令行备用** — `install` / `start` / `status` / `--version` / `--help` 照常可用
+- ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` 照常可用
 - 🐋 **DeepSeek Harness 鲸鱼图标** — 以多尺寸 `.ico` 嵌入 exe
 
 ## 环境要求
@@ -44,10 +45,10 @@
 1. 双击 `dsh-launcher.exe`（或命令行无参运行）。
 2. 查看"环境状态"卡片（Node / npm / dsh / 端口）。
 3. 点击**启动**：
-   - 已安装 dsh → 直接启动服务、打开浏览器，按钮变为"运行中"
+   - 已安装 dsh → 启动服务（已在运行则直接打开浏览器），按钮变为"已运行"
    - 未安装 → 先点**浏览…**选择安装目录（或直接输入），再点**启动**即可自动安装并启动
 4. 需要挪动 dsh 时，点**移动**并选择目标目录（dsh 运行中会拒绝）。
-5. 关闭窗口（或点**退出**）即结束 dsh，无残留进程。
+5. 点**停止**结束 dsh；点**退出**只关闭启动器窗口——dsh 继续在后台运行。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
 
@@ -56,11 +57,14 @@
 ```powershell
 dsh-launcher.exe install [--dir <目录>]   # 安装 @deepseek-ai/dsh（默认 %LOCALAPPDATA%\dsh）
 dsh-launcher.exe move --dir <目录>        # 把已安装的 dsh 挪到新路径（运行中拒绝）
-dsh-launcher.exe start [--no-browser]     # 启动 dsh web 并打开浏览器
+dsh-launcher.exe start [--no-browser]     # 确保 dsh 运行并打开浏览器（幂等）
+dsh-launcher.exe stop                     # 停止 dsh（结束监听端口的进程）
 dsh-launcher.exe status                   # 显示安装目录 / 版本 / 运行状态
 dsh-launcher.exe --version                # 显示版本
 dsh-launcher.exe --help
 ```
+
+> dsh **独立运行**：`start` 在 dsh 就绪后即返回，启动器退出不影响 dsh；用 `stop` 停止。
 
 日志写入 `%TEMP%\dsh-launcher.log`。
 
@@ -121,8 +125,8 @@ git push origin v0.0.1
 | Go 单 exe | 静态编译、零运行时依赖、双击即用 |
 | `npm install -g --prefix <dir>` | 安装目录显式可记录，不污染 npm 全局环境 |
 | 配置跟随 exe | 便携：exe + launcher.json 一起拷走 |
-| 子进程 + 端口轮询 | 生命周期可控，不留孤儿 dsh |
-| Job Object（KILL_ON_JOB_CLOSE） | 即使 `taskkill /F` 强杀启动器也会回收子进程 |
+| dsh 独立进程 | 启动器退出后 dsh 继续运行；按端口定位停止 |
+| `netstat` 端口 → PID → `taskkill` 停止 | 无需守护状态，幂等 |
 | 子进程一律 `CREATE_NO_WINDOW` | windowsgui 父进程下 node/npm 不弹控制台黑框 |
 | `BeginPaint` / `EndPaint` | 防止 WM_PAINT 风暴（`GetDC` 不清除无效区域） |
 | UI 看门狗 | UI 线程卡死 12 秒自动退出（模态对话框豁免） |

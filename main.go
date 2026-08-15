@@ -25,7 +25,9 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
                                             --dir 可覆盖（例如 D:\Tools\dsh）
   dsh-launcher.exe move --dir <目录>        把已安装的 dsh 挪到新路径
                                             （跨盘自动复制+删除，运行中禁止）
-  dsh-launcher.exe start [--no-browser]     命令行启动 dsh web（日志到文件）
+  dsh-launcher.exe start [--no-browser]     确保 dsh 运行并打开浏览器（dsh 独立运行，
+                                            启动器退出不影响；已在运行则不重复启动）
+  dsh-launcher.exe stop                     停止 dsh（按配置端口结束进程）
   dsh-launcher.exe status                   显示安装目录、版本与运行状态
   dsh-launcher.exe --version | -v           显示版本
   dsh-launcher.exe --help | -h              显示本帮助
@@ -33,7 +35,7 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
 说明：
   - 配置 launcher.json 与 exe 同目录，跟随 exe 走（便携）
   - 运行日志写入 %TEMP%\dsh-launcher.log（windowsgui 版无控制台输出，以此为准）
-  - GUI 里「启动」后，关闭窗口即同时结束 dsh 进程（Job Object 兜底回收）
+  - dsh 以独立进程运行，不绑定启动器：关闭本窗口/退出不影响 dsh，用「停止」结束
 `
 
 // guiBuild 由正式构建通过 -ldflags "-X main.guiBuild=1" 注入（配合 -H windowsgui）。
@@ -65,6 +67,8 @@ func main() {
 		runMove(args[1:])
 	case "start":
 		runStart(args[1:])
+	case "stop":
+		runStop()
 	case "status":
 		runStatus()
 	default:
@@ -142,9 +146,25 @@ func runStart(rest []string) {
 		}
 		fail("读取配置失败：%v", err)
 	}
-	if err := launch.Start(cfg, noBrowser); err != nil {
+	if _, err := launch.StartDetached(cfg, noBrowser); err != nil {
 		fail("启动失败：%v", err)
 	}
+	log.Info("dsh 已独立运行（启动器退出不影响 dsh）。")
+}
+
+// runStop 处理 stop 子命令：结束配置端口上的 dsh 进程。
+func runStop() {
+	cfg, err := config.Load()
+	if err != nil {
+		if os.IsNotExist(err) {
+			fail("未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装")
+		}
+		fail("读取配置失败：%v", err)
+	}
+	if err := launch.Stop(cfg); err != nil {
+		fail("停止失败：%v", err)
+	}
+	log.Info("停止完成。")
 }
 
 // runStatus 处理 status 子命令。

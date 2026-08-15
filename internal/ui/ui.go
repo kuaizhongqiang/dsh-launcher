@@ -31,6 +31,7 @@ const (
 	btnInstall
 	btnMove
 	btnStart
+	btnStop
 	btnExit
 )
 
@@ -71,15 +72,15 @@ type uiState struct {
 	buttons map[btnKind]*btnUI
 
 	mu      sync.Mutex
-	busy    bool // 安装/启动中
-	running bool // dsh 运行中
-	server  *launch.Server
+	busy    bool // 安装/启动/停止中
+	running atomic.Bool // dsh 运行中（refreshStatus 定期刷新）
 
 	// 状态行（UI 线程读，刷新 goroutine 写——由 msgRefresh 传递，故仅 UI 线程读写）
 	nodeLine, npmLine, dshLine, portLine string
 	nodeCol,  npmCol,  dshCol,  portCol  uint32
 
 	logCh chan string // 日志行队列（后台 → UI 线程）
+	logCount int     // 日志框当前行数（限行用）
 	unsub     func()
 	hb        atomic.Int64 // UI 线程心跳（UnixNano），看门狗用
 	modal     atomic.Bool  // 模态对话框（浏览目录）进行中，看门狗豁免
@@ -88,23 +89,25 @@ type uiState struct {
 
 const wmTimer = 0x0113
 
-// watchdog 后台看门狗：UI 线程心跳停滞（卡死）超过 12 秒 → 自动退出；
+// maxLogLines 日志框最多保留的行数（超出清空，避免长文本拖慢编辑框）。
+const maxLogLines = 600
+
+// watchdog 后台看门狗：UI 线程心跳停滞（卡死）超过 30 秒 → 自动退出；
 // 模态对话框期间豁免，但超过 60 秒（目录框卡死）也退出。
-// 子进程由 Job Object 兜底回收，进程退出不留孤儿。
 func (u *uiState) watchdog() {
 	for {
 		time.Sleep(3 * time.Second)
 		if u.modal.Load() {
 			from := time.Unix(0, u.modalFrom.Load())
 			if time.Since(from) > 60*time.Second {
-				log.Error("目录选择框无响应超过 60 秒，自动退出（dsh 子进程已由 Job Object 回收）")
+				log.Error("目录选择框无响应超过 60 秒，自动退出")
 				os.Exit(1)
 			}
 			continue
 		}
 		last := time.Unix(0, u.hb.Load())
-		if time.Since(last) > 12*time.Second {
-			log.Error("UI 线程无响应超过 12 秒，自动退出（dsh 子进程已由 Job Object 回收）")
+		if time.Since(last) > 30*time.Second {
+			log.Error("UI 线程无响应超过 30 秒，自动退出")
 			os.Exit(1)
 		}
 	}
@@ -125,6 +128,7 @@ type layout struct {
 	move     rect
 	logBox   rect
 	startBtn rect
+	stopBtn  rect
 	exitBtn  rect
 }
 
@@ -143,7 +147,8 @@ func (u *uiState) lay() layout {
 		install:  rect{w - sc(220), sc(202), w - sc(140), sc(232)},
 		move:     rect{w - sc(132), sc(202), w - sc(52), sc(232)},
 		logBox:   rect{sc(16), sc(244), w - sc(16), sc(404)},
-		startBtn: rect{sc(16), sc(418), sc(166), sc(458)},
+		startBtn: rect{sc(16), sc(418), sc(146), sc(458)},
+		stopBtn:  rect{sc(154), sc(418), sc(274), sc(458)},
 		exitBtn:  rect{w - sc(116), sc(418), w - sc(16), sc(458)},
 	}
 	baseY := int32(100)
@@ -196,7 +201,7 @@ func Run() int {
 		return 1
 	}
 	u := &uiState{hwnd: syscall.Handle(hwnd), buttons: map[btnKind]*btnUI{}}
-	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnMove, btnStart, btnExit} {
+	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnMove, btnStart, btnStop, btnExit} {
 		u.buttons[k] = &btnUI{kind: k}
 	}
 	mainUI = u
@@ -438,6 +443,8 @@ func (u *uiState) hitBtn(x, y int32) btnKind {
 		return btnMove
 	case inRect(&L.startBtn, x, y):
 		return btnStart
+	case inRect(&L.stopBtn, x, y):
+		return btnStop
 	case inRect(&L.exitBtn, x, y):
 		return btnExit
 	}
@@ -509,19 +516,16 @@ func (u *uiState) onClick(k btnKind) {
 		u.onMove()
 	case btnStart:
 		u.onStart()
+	case btnStop:
+		u.onStop()
 	}
 }
 
 func (u *uiState) closeApp() {
-	u.mu.Lock()
-	srv := u.server
-	u.mu.Unlock()
-	if srv != nil {
-		log.Info("正在结束 dsh 子进程……")
-		srv.Stop()
+	// 解绑后 dsh 独立运行，关闭窗口不影响 dsh
+	if u.running.Load() {
+		log.Info("dsh 仍在后台运行（独立进程）。需要停止时请用「停止」按钮或 stop 命令。")
 	}
-	// 直接结束进程：Job Object 已兜底回收子进程。
-	// 不能用 PostQuitMessage 依赖消息队列排空——队列积压时进程可能不退出。
 	os.Exit(0)
 }
 
@@ -534,9 +538,7 @@ func (u *uiState) isBusy() bool {
 }
 
 func (u *uiState) isRunning() bool {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.running
+	return u.running.Load()
 }
 
 func (u *uiState) setBusy(b bool) {
@@ -546,15 +548,7 @@ func (u *uiState) setBusy(b bool) {
 }
 
 func (u *uiState) setRunning(b bool) {
-	u.mu.Lock()
-	u.running = b
-	u.mu.Unlock()
-}
-
-func (u *uiState) setServer(s *launch.Server) {
-	u.mu.Lock()
-	u.server = s
-	u.mu.Unlock()
+	u.running.Store(b)
 }
 
 func (u *uiState) pathText() string {
@@ -572,6 +566,13 @@ func (u *uiState) setPath(dir string) {
 }
 
 func (u *uiState) appendLog(line string) {
+	// 日志框限行：超过 maxLogLines 行时清空（保留最新），避免长文本拖慢 EM_REPLACESEL
+	u.logCount++
+	if u.logCount > maxLogLines {
+		sendMessage(u.hLog, emSetSel, 0, ^uintptr(0))
+		sendMessage(u.hLog, emReplaceSel, 0, 0)
+		u.logCount = 0
+	}
 	sendMessage(u.hLog, emSetSel, ^uintptr(0), ^uintptr(0))
 	sendMessage(u.hLog, emReplaceSel, 0, uintptr(unsafe.Pointer(utf16Ptr(line))))
 	sendMessage(u.hLog, emScrollCaret, 0, 0)
@@ -582,6 +583,7 @@ func (u *uiState) invalidateAll() {
 }
 
 // refreshStatus 在后台刷新环境状态文本，完成后通知 UI。
+// refreshStatus 刷新环境状态（node/npm 探测一次）并定期更新端口运行状态（每 3 秒）。
 func (u *uiState) refreshStatus() {
 	ni, err := node.Detect()
 	if err != nil {
@@ -595,24 +597,30 @@ func (u *uiState) refreshStatus() {
 		u.npmLine = "npm       " + ni.NPMVer
 		u.npmCol = colText
 	}
-	cfg, err := config.Load()
-	if err != nil || !cfg.IsInstalled() {
-		u.dshLine = "dsh       未安装"
-		u.dshCol = colRed
-		u.portLine = "端口      -"
-		u.portCol = colTextDim
-	} else {
-		u.dshLine = "dsh       " + cfg.DshVersion + "  已安装"
-		u.dshCol = colGreen
-		if launch.IsRunning(cfg) {
-			u.portLine = "端口      " + itoa(cfg.Port) + "  运行中"
-			u.portCol = colGreen
-		} else {
-			u.portLine = "端口      " + itoa(cfg.Port) + "  未运行"
+	for {
+		cfg, err := config.Load()
+		if err != nil || !cfg.IsInstalled() {
+			u.dshLine = "dsh       未安装"
+			u.dshCol = colRed
+			u.portLine = "端口      -"
 			u.portCol = colTextDim
+			u.setRunning(false)
+		} else {
+			u.dshLine = "dsh       " + cfg.DshVersion + "  已安装"
+			u.dshCol = colGreen
+			if launch.IsRunning(cfg) {
+				u.portLine = "端口      " + itoa(cfg.Port) + "  运行中"
+				u.portCol = colGreen
+				u.setRunning(true)
+			} else {
+				u.portLine = "端口      " + itoa(cfg.Port) + "  未运行"
+				u.portCol = colTextDim
+				u.setRunning(false)
+			}
 		}
+		postMessage(u.hwnd, wmApp+2, 0, 0)
+		time.Sleep(3 * time.Second)
 	}
-	postMessage(u.hwnd, wmApp+2, 0, 0)
 }
 
 func itoa(n int) string {

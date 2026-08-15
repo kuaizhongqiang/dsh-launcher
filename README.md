@@ -20,11 +20,12 @@ A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](
 
 - 🖥️ **Dark dsh-style GUI** — theme tokens taken from the dsh web UI (`#151517` background, `#5686FE` brand blue, 12px rounded corners)
 - ⚡ **One-click start** — installs dsh if missing (with a directory picker), then starts the server and opens your browser
+- 🕊️ **Detached server** — dsh runs as an independent process; closing the launcher window does **not** stop it. Starting again when dsh is already up just re-opens the browser
+- 🛑 **Stop** — stops dsh by resolving the process on the configured port (GUI **停止** button / `stop` command)
 - 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive handled with copy+delete); refused while dsh is running
 - 🔍 **Environment status** — Node.js / npm / dsh versions, install state, port health
 - 📜 **Live log** — install & startup output streamed into the window
-- 🧹 **Clean lifecycle** — closing the window stops dsh; a Windows Job Object reaps the child process even on force-kill
-- ⌨️ **CLI fallback** — `install` / `start` / `status` / `--version` / `--help` work from a terminal too
+- ⌨️ **CLI fallback** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` work from a terminal too
 - 🐋 **DeepSeek Harness icon** — the dsh whale, embedded as a multi-size `.ico`
 
 ## Requirements
@@ -44,10 +45,10 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 1. Double-click `dsh-launcher.exe` (or run it with no arguments).
 2. Read the environment status card (Node / npm / dsh / port).
 3. Click **启动 (Start)**:
-   - dsh already installed → starts the server, opens the browser, button turns into "running"
+   - dsh already installed → starts it (or just opens the browser if it is already running); the button then reads "已运行"
    - not installed → click **浏览… (Browse…)** to pick an install dir (or type one), then **启动** again to install & start automatically
 4. To relocate the installed dsh package, click **移动 (Move)** and pick a target directory (refused while dsh is running).
-5. Close the window (or click **退出**) to stop dsh — no orphan processes.
+5. Click **停止 (Stop)** to shut dsh down, or **退出 (Exit)** to close the launcher only — dsh keeps running in the background.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
 
@@ -56,11 +57,14 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 ```powershell
 dsh-launcher.exe install [--dir <dir>]   # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
 dsh-launcher.exe move --dir <dir>        # relocate the installed dsh package (refused while running)
-dsh-launcher.exe start [--no-browser]    # start dsh web, open browser
+dsh-launcher.exe start [--no-browser]    # ensure dsh is running, open browser (idempotent)
+dsh-launcher.exe stop                    # stop dsh (kill the process listening on the port)
 dsh-launcher.exe status                  # show install dir / version / running state
 dsh-launcher.exe --version               # show version
 dsh-launcher.exe --help
 ```
+
+> dsh runs **detached**: `start` returns once dsh is up and the launcher may exit without affecting dsh. Use `stop` to shut it down.
 
 Logs are written to `%TEMP%\dsh-launcher.log`.
 
@@ -119,14 +123,13 @@ git push origin v0.0.1
 | Decision | Why |
 |---|---|
 | Single Go exe | Static compile, zero runtime deps, double-click to run |
+| Detached dsh process | dsh keeps running after the launcher exits; stop via port lookup |
 | `npm install -g --prefix <dir>` | Install dir is explicit & recorded; npm global env untouched |
 | `move` = Rename, fallback copy+delete | Same-disk move is instant; cross-drive works via recursive copy |
 | Config next to exe | Portable — copy exe + launcher.json together |
-| Child process + port polling | Controllable lifecycle, no orphan dsh |
-| Job Object (`KILL_ON_JOB_CLOSE`) | Even `taskkill /F` of the launcher reaps the child |
 | `CREATE_NO_WINDOW` on children | No console flash from node/npm under a windowsgui parent |
 | `BeginPaint` / `EndPaint` | Prevents WM_PAINT storms (`GetDC` never clears the invalid region) |
-| UI watchdog | A stuck UI thread auto-exits after 12 s (modal dialogs exempt) |
+| UI watchdog | A stuck UI thread auto-exits after 30 s (modal dialogs exempt) |
 | `ExtractIconExW` for the icon | Not tied to a fragile resource ID |
 
 ## License
