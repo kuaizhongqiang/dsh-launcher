@@ -18,7 +18,7 @@ import (
 const (
 	className = "dshLauncherMainWnd"
 	windowTitle = "dsh-launcher"
-	baseW, baseH = 620, 480
+	baseW, baseH = 700, 480
 )
 
 // ---------- 按钮 ----------
@@ -29,6 +29,7 @@ const (
 	btnClose btnKind = iota
 	btnBrowse
 	btnInstall
+	btnMove
 	btnStart
 	btnExit
 )
@@ -121,6 +122,7 @@ type layout struct {
 	pathBox  rect
 	browse   rect
 	install  rect
+	move     rect
 	logBox   rect
 	startBtn rect
 	exitBtn  rect
@@ -136,9 +138,10 @@ func (u *uiState) lay() layout {
 		card:     rect{sc(16), sc(60), w - sc(16), sc(196)},
 		cardTxt:  rect{sc(28), sc(68), w - sc(28), sc(92)},
 		pathLbl:  rect{sc(16), sc(208), sc(84), sc(232)},
-		pathBox:  rect{sc(84), sc(204), w - sc(252), sc(230)},
-		browse:   rect{w - sc(244), sc(202), w - sc(164), sc(232)},
-		install:  rect{w - sc(156), sc(202), w - sc(76), sc(232)},
+		pathBox:  rect{sc(84), sc(204), w - sc(316), sc(230)},
+		browse:   rect{w - sc(308), sc(202), w - sc(228), sc(232)},
+		install:  rect{w - sc(220), sc(202), w - sc(140), sc(232)},
+		move:     rect{w - sc(132), sc(202), w - sc(52), sc(232)},
 		logBox:   rect{sc(16), sc(244), w - sc(16), sc(404)},
 		startBtn: rect{sc(16), sc(418), sc(166), sc(458)},
 		exitBtn:  rect{w - sc(116), sc(418), w - sc(16), sc(458)},
@@ -193,7 +196,7 @@ func Run() int {
 		return 1
 	}
 	u := &uiState{hwnd: syscall.Handle(hwnd), buttons: map[btnKind]*btnUI{}}
-	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnStart, btnExit} {
+	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnMove, btnStart, btnExit} {
 		u.buttons[k] = &btnUI{kind: k}
 	}
 	mainUI = u
@@ -431,6 +434,8 @@ func (u *uiState) hitBtn(x, y int32) btnKind {
 		return btnBrowse
 	case inRect(&L.install, x, y):
 		return btnInstall
+	case inRect(&L.move, x, y):
+		return btnMove
 	case inRect(&L.startBtn, x, y):
 		return btnStart
 	case inRect(&L.exitBtn, x, y):
@@ -500,6 +505,8 @@ func (u *uiState) onClick(k btnKind) {
 		}
 	case btnInstall:
 		u.onInstall()
+	case btnMove:
+		u.onMove()
 	case btnStart:
 		u.onStart()
 	}

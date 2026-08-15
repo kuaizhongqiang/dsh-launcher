@@ -23,6 +23,8 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
   dsh-launcher.exe install [--dir <目录>]   命令行安装 @deepseek-ai/dsh
                                             默认安装目录 %LOCALAPPDATA%\dsh，
                                             --dir 可覆盖（例如 D:\Tools\dsh）
+  dsh-launcher.exe move --dir <目录>        把已安装的 dsh 挪到新路径
+                                            （跨盘自动复制+删除，运行中禁止）
   dsh-launcher.exe start [--no-browser]     命令行启动 dsh web（日志到文件）
   dsh-launcher.exe status                   显示安装目录、版本与运行状态
   dsh-launcher.exe --version | -v           显示版本
@@ -59,6 +61,8 @@ func main() {
 		log.Raw("dsh-launcher " + version + "\n")
 	case "install":
 		runInstall(args[1:])
+	case "move":
+		runMove(args[1:])
 	case "start":
 		runStart(args[1:])
 	case "status":
@@ -90,6 +94,32 @@ func runInstall(rest []string) {
 		fail("安装失败：%v", err)
 	}
 	log.Info("安装完成。现在可以运行 dsh-launcher.exe（或 dsh-launcher.exe start）启动 dsh。")
+}
+
+// runMove 处理 move 子命令：把 dsh 安装目录挪到新路径。
+func runMove(rest []string) {
+	dir := ""
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--dir", "-d":
+			if i+1 >= len(rest) {
+				fail("--dir 缺少参数")
+			}
+			i++
+			dir = rest[i]
+		default:
+			log.Raw(usage)
+			fail("move 未知参数：%s", rest[i])
+		}
+	}
+	if dir == "" {
+		log.Raw(usage)
+		fail("move 需要 --dir <目标路径>")
+	}
+	if err := install.Move(dir); err != nil {
+		fail("移动失败：%v", err)
+	}
+	log.Info("移动完成。")
 }
 
 // runStart 处理 start 子命令（默认）。

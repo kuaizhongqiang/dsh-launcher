@@ -81,6 +81,44 @@ func (u *uiState) onStart() {
 	}()
 }
 
+// onMove：点击「移动」按钮——把已安装的 dsh 挪到新路径。
+func (u *uiState) onMove() {
+	if u.isBusy() {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil || !cfg.IsInstalled() {
+		log.Warn("尚未安装 dsh，无需移动。请先点「安装」或「启动」。")
+		return
+	}
+	// 运行中禁止移动：仅检查本 launcher 启动的 dsh 子进程
+	//（不用端口检测——3080 可能被其他 dsh 实例占用，误判会让用户无法移动）
+	u.mu.Lock()
+	srv := u.server
+	u.mu.Unlock()
+	if srv != nil {
+		log.Warn("dsh 正在运行，请先停止（关闭窗口 / 退出）后再移动。")
+		return
+	}
+	dir := browseFolder(u.hwnd)
+	if dir == "" {
+		return // 用户取消
+	}
+	u.setBusy(true)
+	u.invalidateAll()
+	go func() {
+		defer func() {
+			u.setBusy(false)
+			postMessage(u.hwnd, msgRefresh, 0, 0)
+		}()
+		if err := install.Move(dir); err != nil {
+			log.Error("移动失败：%v", err)
+			return
+		}
+		log.Info("移动完成。新安装目录：%s", dir)
+	}()
+}
+
 // noBrowser 返回是否跳过打开浏览器（环境变量 DSH_LAUNCHER_NO_BROWSER=1，供测试/无头场景）。
 func noBrowser() bool {
 	return os.Getenv("DSH_LAUNCHER_NO_BROWSER") != ""

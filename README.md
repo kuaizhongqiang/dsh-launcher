@@ -20,6 +20,7 @@ A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](
 
 - 🖥️ **Dark dsh-style GUI** — theme tokens taken from the dsh web UI (`#151517` background, `#5686FE` brand blue, 12px rounded corners)
 - ⚡ **One-click start** — installs dsh if missing (with a directory picker), then starts the server and opens your browser
+- 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive handled with copy+delete); refused while dsh is running
 - 🔍 **Environment status** — Node.js / npm / dsh versions, install state, port health
 - 📜 **Live log** — install & startup output streamed into the window
 - 🧹 **Clean lifecycle** — closing the window stops dsh; a Windows Job Object reaps the child process even on force-kill
@@ -45,7 +46,8 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 3. Click **启动 (Start)**:
    - dsh already installed → starts the server, opens the browser, button turns into "running"
    - not installed → click **浏览… (Browse…)** to pick an install dir (or type one), then **启动** again to install & start automatically
-4. Close the window (or click **退出**) to stop dsh — no orphan processes.
+4. To relocate the installed dsh package, click **移动 (Move)** and pick a target directory (refused while dsh is running).
+5. Close the window (or click **退出**) to stop dsh — no orphan processes.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
 
@@ -53,6 +55,7 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 
 ```powershell
 dsh-launcher.exe install [--dir <dir>]   # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
+dsh-launcher.exe move --dir <dir>        # relocate the installed dsh package (refused while running)
 dsh-launcher.exe start [--no-browser]    # start dsh web, open browser
 dsh-launcher.exe status                  # show install dir / version / running state
 dsh-launcher.exe --version               # show version
@@ -117,6 +120,7 @@ git push origin v0.0.1
 |---|---|
 | Single Go exe | Static compile, zero runtime deps, double-click to run |
 | `npm install -g --prefix <dir>` | Install dir is explicit & recorded; npm global env untouched |
+| `move` = Rename, fallback copy+delete | Same-disk move is instant; cross-drive works via recursive copy |
 | Config next to exe | Portable — copy exe + launcher.json together |
 | Child process + port polling | Controllable lifecycle, no orphan dsh |
 | Job Object (`KILL_ON_JOB_CLOSE`) | Even `taskkill /F` of the launcher reaps the child |

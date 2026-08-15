@@ -20,6 +20,7 @@
 
 - 🖥️ **dsh 风格深色 GUI** — 主题色取自 dsh web 界面（背景 `#151517`、品牌蓝 `#5686FE`、12px 圆角）
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
+- 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
 - 📜 **实时日志** — 安装与启动输出实时显示在窗口内
 - 🧹 **干净的生命周期** — 关闭窗口即停止 dsh；Windows Job Object 兜底回收，即使被强制结束也不留孤儿进程
@@ -45,7 +46,8 @@
 3. 点击**启动**：
    - 已安装 dsh → 直接启动服务、打开浏览器，按钮变为"运行中"
    - 未安装 → 先点**浏览…**选择安装目录（或直接输入），再点**启动**即可自动安装并启动
-4. 关闭窗口（或点**退出**）即结束 dsh，无残留进程。
+4. 需要挪动 dsh 时，点**移动**并选择目标目录（dsh 运行中会拒绝）。
+5. 关闭窗口（或点**退出**）即结束 dsh，无残留进程。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
 
@@ -53,6 +55,7 @@
 
 ```powershell
 dsh-launcher.exe install [--dir <目录>]   # 安装 @deepseek-ai/dsh（默认 %LOCALAPPDATA%\dsh）
+dsh-launcher.exe move --dir <目录>        # 把已安装的 dsh 挪到新路径（运行中拒绝）
 dsh-launcher.exe start [--no-browser]     # 启动 dsh web 并打开浏览器
 dsh-launcher.exe status                   # 显示安装目录 / 版本 / 运行状态
 dsh-launcher.exe --version                # 显示版本
