@@ -27,6 +27,7 @@
 - 📜 **实时日志** — 安装与启动输出实时显示在窗口内
 - ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` 照常可用
 - 🐋 **DeepSeek Harness 鲸鱼图标** — 以多尺寸 `.ico` 嵌入 exe
+- 🧩 **插件生态** — 以 git 子模块携带 [dsh-plugins](dsh-plugins/) 插件合集；自建插件可通过 PR 贡献
 
 ## 环境要求
 
@@ -83,6 +84,41 @@ dsh-launcher.exe --help
 
 - **绝不触碰** `~/.dsh`（`DSH_HOME`）— 现有 profile / 插件 / 会话保持原样。
 - 新机器上运行 `install` 会覆盖配置中的安装路径。
+
+## 插件生态（dsh-plugins）
+
+dsh 本身支持插件：插件放在 `%DSH_HOME%\profiles\web\plugins\`，通过 profile 的
+`cordis.patch.yml` 挂载。本仓库以 **git 子模块**方式携带社区插件合集：
+
+- 本地检出：[`dsh-plugins/`](dsh-plugins/)
+- GitHub：[kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins)
+
+合集里每个插件包都自包含（`install.ps1` + `plugins/`），并配套一个**安装技能**
+（`skills/install-<name>/SKILL.md`），告诉 dsh 的 Agent 如何一步步安装。
+技能只装一次，之后在 dsh 会话里直接说需求即可：
+
+```powershell
+# 在 dsh-plugins 检出目录下
+powershell -ExecutionPolicy Bypass -File .\skills\install-skills.ps1
+# 然后在 dsh 会话里说：“安装 describe-image 插件”（或 /install-describe-image）
+```
+
+> dsh-launcher **绝不触碰** `~/.dsh`（`DSH_HOME`）：插件的安装与使用与启动器完全独立。
+
+### 贡献自建插件
+
+自建了插件？欢迎回馈合集——向插件合集提交 Pull Request：
+
+1. 把插件做成自包含包：幂等的 `install.ps1` + `plugins/<name>/` + `README.md`
+2. 配套安装技能：`skills/install-<name>/SKILL.md`（约定见合集的 `skills/README.md`）
+3. 向 [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins) 提交 Pull Request
+
+合并后，刷新本仓库的子模块：
+
+```powershell
+git submodule update --remote dsh-plugins
+git add dsh-plugins && git commit -m "chore: bump dsh-plugins submodule"
+```
 
 ## 从源码构建
 

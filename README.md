@@ -27,6 +27,7 @@ A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](
 - 📜 **Live log** — install & startup output streamed into the window
 - ⌨️ **CLI fallback** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` work from a terminal too
 - 🐋 **DeepSeek Harness icon** — the dsh whale, embedded as a multi-size `.ico`
+- 🧩 **Plugin ecosystem** — carries the [dsh-plugins](dsh-plugins/) collection as a git submodule; contribute your own plugins via PR
 
 ## Requirements
 
@@ -83,6 +84,38 @@ Created next to the exe on first `install` (portable — copy the exe together w
 
 - `~/.dsh` (`DSH_HOME`) is **never** touched — your existing profiles / plugins / sessions stay intact.
 - Running `install` on a new machine overwrites the config with the new path.
+
+## Plugin ecosystem (dsh-plugins)
+
+dsh itself is plugin-ready: plugins live under `%DSH_HOME%\profiles\web\plugins\` and are mounted through the profile's `cordis.patch.yml`. This repo carries the community plugin collection as a **git submodule**:
+
+- Local checkout: [`dsh-plugins/`](dsh-plugins/)
+- GitHub: [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins)
+
+Each plugin package in the collection is self-contained (`install.ps1` + `plugins/`) and ships with an **installation skill** (`skills/install-<name>/SKILL.md`) that tells the dsh agent how to install it step by step. Install the skills once, then just ask in a dsh session:
+
+```powershell
+# from the dsh-plugins checkout
+powershell -ExecutionPolicy Bypass -File .\skills\install-skills.ps1
+# then in a dsh session: "install the describe-image plugin" (or /install-describe-image)
+```
+
+> dsh-launcher **never touches** `~/.dsh` (`DSH_HOME`): installing or using plugins is fully independent of the launcher.
+
+### Contribute your own plugin
+
+Built a plugin for your own use? Share it back — open a PR against the collection:
+
+1. Make the package self-contained: idempotent `install.ps1` + `plugins/<name>/` + `README.md`.
+2. Add a matching installation skill: `skills/install-<name>/SKILL.md` (see the collection's conventions in `skills/README.md`).
+3. Open a pull request against [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins).
+
+Once merged, refresh the submodule here:
+
+```powershell
+git submodule update --remote dsh-plugins
+git add dsh-plugins && git commit -m "chore: bump dsh-plugins submodule"
+```
 
 ## Build from source
 
