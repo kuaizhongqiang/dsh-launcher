@@ -16,6 +16,18 @@ import (
 	"dsh-launcher/internal/node"
 )
 
+// lockUIThread 把当前 goroutine 锁死在当前 OS 线程上。
+//
+// 关键：Win32 窗口与消息队列是线程级状态——窗口在哪个线程创建，其消息就进
+// 哪个线程的队列。Go 调度器默认会在 syscall 之间迁移 goroutine；若创建窗口的
+// 主 goroutine 被挪到别的线程，GetMessageW(hwnd=0) 就会去读"别的线程的队列"
+// （空的），窗口消息永远不被分发 → 界面假死（0% CPU、窗口无法点击）。
+// 必须在创建窗口前调用本函数，保证 RegisterClass/CreateWindow/GetMessage/
+// DispatchMessage 全部在同一 OS 线程上执行。
+func lockUIThread() {
+	runtime.LockOSThread()
+}
+
 const (
 	className = "dshLauncherMainWnd"
 	windowTitle = "dsh-launcher"
@@ -180,6 +192,7 @@ var (
 )
 
 func Run() int {
+	lockUIThread() // 窗口线程必须锁定，否则消息循环读到别的线程队列 → 界面假死
 	if r, _, _ := pGetModuleHandleW.Call(0); r != 0 {
 		hInstance = syscall.Handle(r)
 	}
