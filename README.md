@@ -56,7 +56,11 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 ### CLI
 
 ```powershell
-dsh-launcher.exe install [--dir <dir>]   # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
+dsh-launcher.exe install [--dir <dir>] [--registry <url>] [--mirror] [--no-mirror]
+                        # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
+                        # --registry: explicit npm registry
+                        # --mirror:    force the China mirror (registry.npmmirror.com)
+                        # --no-mirror: disable auto-switch to the mirror
 dsh-launcher.exe move --dir <dir>        # relocate the installed dsh package (refused while running)
 dsh-launcher.exe start [--no-browser]    # ensure dsh is running, open browser (idempotent)
 dsh-launcher.exe stop                    # stop dsh (kill the process listening on the port)
@@ -66,6 +70,21 @@ dsh-launcher.exe --help
 ```
 
 > dsh runs **detached**: `start` returns once dsh is up and the launcher may exit without affecting dsh. Use `stop` to shut it down.
+
+### China download acceleration (mirror auto-switch)
+
+`install` pulls `@deepseek-ai/dsh` from the **npm registry** (default `registry.npmjs.org`), which is often slow for domestic users. The launcher therefore **probes both the primary registry and the npmmirror mirror** (`registry.npmmirror.com`) and picks the faster one — if the primary is unreachable or noticeably slower (≥3× and >500 ms), it automatically switches to the mirror; a failed `npm install` is also retried once with the other source.
+
+Control it with CLI flags or environment variables (CLI wins over env):
+
+| Flag | Env | Effect |
+|---|---|---|
+| `--registry <url>` | `DSH_LAUNCHER_NPM_REGISTRY` | explicit primary registry |
+| `--mirror` | `DSH_LAUNCHER_PREFER_MIRROR=1` | always use the mirror (no probing) |
+| `--no-mirror` | `DSH_LAUNCHER_NO_MIRROR=1` | never use the mirror |
+| — | `DSH_LAUNCHER_NPM_MIRROR` | custom mirror URL |
+
+The choice is logged (`下载源：…`), persisted in `launcher.json` (`registry` / `registryMirror` / `preferMirror`) and reused by the GUI's install button.
 
 Logs are written to `%TEMP%\dsh-launcher.log`.
 
@@ -78,7 +97,10 @@ Created next to the exe on first `install` (portable — copy the exe together w
   "dshInstallDir": "C:\\Users\\<user>\\AppData\\Local\\dsh",
   "dshVersion": "0.1.0-rc.6",
   "port": 3080,
-  "installedAt": "2026-08-15T17:00:00+08:00"
+  "installedAt": "2026-08-15T17:00:00+08:00",
+  "registry": "",
+  "registryMirror": "",
+  "preferMirror": false
 }
 ```
 
@@ -158,6 +180,7 @@ git push origin v0.0.1
 | Single Go exe | Static compile, zero runtime deps, double-click to run |
 | Detached dsh process | dsh keeps running after the launcher exits; stop via port lookup |
 | `npm install -g --prefix <dir>` | Install dir is explicit & recorded; npm global env untouched |
+| Registry mirror auto-switch | Probe `/-/ping` on primary vs npmmirror in parallel; slow/unreachable primary → mirror (domestic users) |
 | `move` = Rename, fallback copy+delete | Same-disk move is instant; cross-drive works via recursive copy |
 | Config next to exe | Portable — copy exe + launcher.json together |
 | `CREATE_NO_WINDOW` on children | No console flash from node/npm under a windowsgui parent |

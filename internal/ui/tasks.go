@@ -27,7 +27,9 @@ func (u *uiState) onInstall() {
 			u.setBusy(false)
 			postMessage(u.hwnd, msgRefresh, 0, 0)
 		}()
-		if err := install.Run(dir); err != nil {
+		// 下载源策略：既有配置 + 环境变量（官方源慢/不可达时自动切换国内镜像）
+		cfg, _ := config.Load()
+		if err := install.Run(dir, install.RegistrySpecFromConfig(cfg)); err != nil {
 			log.Error("安装失败：%v", err)
 			return
 		}
@@ -79,7 +81,9 @@ func (u *uiState) onStart() {
 			postMessage(u.hwnd, msgRefresh, 0, 0)
 		}()
 		log.Info("未检测到已安装的 dsh，开始安装到 %s……", dir)
-		if err := install.Run(dir); err != nil {
+		// 下载源策略：既有配置 + 环境变量（官方源慢/不可达时自动切换国内镜像）
+		cfg0, _ := config.Load()
+		if err := install.Run(dir, install.RegistrySpecFromConfig(cfg0)); err != nil {
 			log.Error("安装失败：%v", err)
 			return
 		}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +14,100 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // DshPackage 是 npm 包名。
 const DshPackage = "@deepseek-ai/dsh"
+
+// DefaultNpmRegistry 是 npm 默认官方源（registry="" 时由 npm 自身决定）。
+const DefaultNpmRegistry = "https://registry.npmjs.org"
+
+// DefaultNpmMirror 是国内镜像源（npmmirror，原淘宝镜像）。
+const DefaultNpmMirror = "https://registry.npmmirror.com"
+
+// RegistrySpec 描述安装时 npm registry 的选择策略。
+type RegistrySpec struct {
+	// Registry 显式指定主源（"" = npm 默认官方源）。
+	Registry string
+	// Mirror 国内镜像（"" = DefaultNpmMirror）。
+	Mirror string
+	// PreferMirror 强制用镜像，跳过速度探测与回退。
+	PreferMirror bool
+	// DisableAutoSwitch 关闭自动切换（主源不可达/明显慢于镜像时也不换镜像，失败也不回退）。
+	DisableAutoSwitch bool
+}
+
+// Effective 返回解析后的主源与镜像。
+func (s RegistrySpec) Effective() (primary, mirror string) {
+	primary = s.Registry
+	if primary == "" {
+		primary = DefaultNpmRegistry
+	}
+	mirror = s.Mirror
+	if mirror == "" {
+		mirror = DefaultNpmMirror
+	}
+	return
+}
+
+// probeLatency 探测一个 registry 的 /-/ping 延迟（失败返回 err）。
+func probeLatency(registry string, timeout time.Duration) (time.Duration, error) {
+	url := strings.TrimRight(registry, "/") + "/-/ping"
+	client := &http.Client{Timeout: timeout}
+	start := time.Now()
+	resp, err := client.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("registry %s 返回 %d", registry, resp.StatusCode)
+	}
+	// 读一点 body（npm 官方源 /-/ping 可能返回空，镜像返回 {"pong":true}）
+	_, _ = io.CopyN(io.Discard, resp.Body, 64)
+	return time.Since(start), nil
+}
+
+// ChooseRegistry 决定安装用哪个 registry，返回 (registry, 是否用了镜像, 探测信息)。
+// 规则（未 DisableAutoSwitch 时）：
+//   - 强制镜像 → 镜像
+//   - 并发放主源与镜像：主源失败 → 镜像；镜像失败 → 主源；
+//     两者都通但主源明显慢于镜像（≥3× 且 >500ms）→ 镜像；否则主源。
+func (s RegistrySpec) ChooseRegistry() (registry string, viaMirror bool, probe string) {
+	primary, mirror := s.Effective()
+	if s.PreferMirror {
+		return mirror, true, "prefer-mirror"
+	}
+	if s.DisableAutoSwitch {
+		return primary, false, "auto-switch disabled"
+	}
+	if primary == mirror {
+		return primary, false, "primary==mirror"
+	}
+	const probeTimeout = 3 * time.Second
+	type result struct {
+		latency time.Duration
+		err     error
+	}
+	results := make(chan result, 2)
+	go func() { d, e := probeLatency(primary, probeTimeout); results <- result{d, e} }()
+	go func() { d, e := probeLatency(mirror, probeTimeout); results <- result{d, e} }()
+	pr := <-results
+	mr := <-results
+	switch {
+	case pr.err != nil && mr.err != nil:
+		return primary, false, fmt.Sprintf("主源与镜像均不可达（主:%v 镜:%v），回退主源", pr.err, mr.err)
+	case pr.err != nil:
+		return mirror, true, fmt.Sprintf("主源不可达（%v），镜像 %v", pr.err, mr.latency.Round(time.Millisecond))
+	case mr.err != nil:
+		return primary, false, fmt.Sprintf("镜像不可达（%v），主源 %v", mr.err, pr.latency.Round(time.Millisecond))
+	case pr.latency >= 3*mr.latency && pr.latency > 500*time.Millisecond:
+		return mirror, true, fmt.Sprintf("主源 %v 明显慢于镜像 %v", pr.latency.Round(time.Millisecond), mr.latency.Round(time.Millisecond))
+	default:
+		return primary, false, fmt.Sprintf("主源 %v 可用（镜像 %v）", pr.latency.Round(time.Millisecond), mr.latency.Round(time.Millisecond))
+	}
+}
 
 // Version 是语义化版本号。
 type Version struct {
@@ -96,9 +188,9 @@ func Detect() (*Info, error) {
 	}, nil
 }
 
-// Install 执行 `npm install -g --prefix <dir> <pkg>`，返回合并输出。
-func Install(pkg, dir string) (string, error) {
-	cmd := noWindow(exec.Command("npm", "install", "-g", "--no-fund", "--no-audit", "--prefix", dir, pkg))
+// Install 执行 `npm install -g --prefix <dir> --registry <registry> <pkg>`，返回合并输出。
+func Install(pkg, dir, registry string) (string, error) {
+	cmd := noWindow(exec.Command("npm", "install", "-g", "--no-fund", "--no-audit", "--prefix", dir, "--registry", registry, pkg))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

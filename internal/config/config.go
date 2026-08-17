@@ -18,6 +18,14 @@ type Config struct {
 	DshVersion    string    `json:"dshVersion,omitempty"`
 	Port          int       `json:"port"`
 	InstalledAt   time.Time `json:"installedAt"`
+
+	// 下载源配置（可选，仅 install 使用）：
+	//   Registry       覆盖 npm registry（"" = 用 npm 默认，通常 registry.npmjs.org）
+	//   RegistryMirror 国内镜像（"" = 默认 https://registry.npmmirror.com）
+	//   PreferMirror   强制使用镜像（跳过速度探测）
+	Registry       string `json:"registry,omitempty"`
+	RegistryMirror string `json:"registryMirror,omitempty"`
+	PreferMirror   bool   `json:"preferMirror,omitempty"`
 }
 
 // Path 返回 launcher.json 路径（与 exe 同目录）。

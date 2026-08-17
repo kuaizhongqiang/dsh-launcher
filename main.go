@@ -20,9 +20,14 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
 用法：
   dsh-launcher.exe                  无参数（双击）→ 打开图形界面：
                                      状态展示 + 路径选择 + 安装 + 一键启动
-  dsh-launcher.exe install [--dir <目录>]   命令行安装 @deepseek-ai/dsh
-                                            默认安装目录 %LOCALAPPDATA%\dsh，
-                                            --dir 可覆盖（例如 D:\Tools\dsh）
+  dsh-launcher.exe install [--dir <目录>] [--registry <url>] [--mirror] [--no-mirror]
+                                     命令行安装 @deepseek-ai/dsh
+                                     默认安装目录 %LOCALAPPDATA%\dsh，
+                                     --dir 可覆盖（例如 D:\Tools\dsh）
+                                     --registry 指定 npm 源（默认 registry.npmjs.org）
+                                     --mirror 强制使用国内镜像（registry.npmmirror.com）
+                                     --no-mirror 关闭镜像自动切换
+                                     未指定时自动探测：主源不可达/明显慢于镜像则切换镜像
   dsh-launcher.exe move --dir <目录>        把已安装的 dsh 挪到新路径
                                             （跨盘自动复制+删除，运行中禁止）
   dsh-launcher.exe start [--no-browser]     确保 dsh 运行并打开浏览器（dsh 独立运行，
@@ -36,6 +41,10 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
   - 配置 launcher.json 与 exe 同目录，跟随 exe 走（便携）
   - 运行日志写入 %TEMP%\dsh-launcher.log（windowsgui 版无控制台输出，以此为准）
   - dsh 以独立进程运行，不绑定启动器：关闭本窗口/退出不影响 dsh，用「停止」结束
+  - 国内下载加速：install 自动探测 npm 官方源与 npmmirror 镜像的延迟，
+    官方源不可达或明显更慢时自动使用镜像（可 --no-mirror 关闭）；
+    也可用环境变量 DSH_LAUNCHER_NPM_REGISTRY / DSH_LAUNCHER_NPM_MIRROR /
+    DSH_LAUNCHER_PREFER_MIRROR=1 / DSH_LAUNCHER_NO_MIRROR=1 控制
 `
 
 // guiBuild 由正式构建通过 -ldflags "-X main.guiBuild=1" 注入（配合 -H windowsgui）。
@@ -81,6 +90,7 @@ func main() {
 // runInstall 处理 install 子命令。
 func runInstall(rest []string) {
 	dir := ""
+	spec := install.RegistrySpecFromEnv(node.RegistrySpec{})
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--dir", "-d":
@@ -89,12 +99,22 @@ func runInstall(rest []string) {
 			}
 			i++
 			dir = rest[i]
+		case "--registry":
+			if i+1 >= len(rest) {
+				fail("--registry 缺少参数")
+			}
+			i++
+			spec.Registry = rest[i]
+		case "--mirror":
+			spec.PreferMirror = true
+		case "--no-mirror":
+			spec.DisableAutoSwitch = true
 		default:
 			log.Raw(usage)
 			fail("install 未知参数：%s", rest[i])
 		}
 	}
-	if err := install.Run(dir); err != nil {
+	if err := install.Run(dir, spec); err != nil {
 		fail("安装失败：%v", err)
 	}
 	log.Info("安装完成。现在可以运行 dsh-launcher.exe（或 dsh-launcher.exe start）启动 dsh。")
