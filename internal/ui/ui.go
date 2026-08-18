@@ -29,9 +29,9 @@ func lockUIThread() {
 }
 
 const (
-	className = "dshLauncherMainWnd"
+	className  = "dshLauncherMainWnd"
 	windowTitle = "dsh-launcher"
-	baseW, baseH = 700, 480
+	baseW, baseH = 700, 500
 )
 
 // ---------- 按钮 ----------
@@ -46,6 +46,7 @@ const (
 	btnStart
 	btnStop
 	btnExit
+	btnUpdate
 )
 
 type btnUI struct {
@@ -91,6 +92,15 @@ type uiState struct {
 	// 状态行（UI 线程读，刷新 goroutine 写——由 msgRefresh 传递，故仅 UI 线程读写）
 	nodeLine, npmLine, dshLine, portLine string
 	nodeCol,  npmCol,  dshCol,  portCol  uint32
+
+	// 升级检测状态（检查/升级 goroutine 写，UI 线程读——由 msgRefresh 传递）
+	launcherVer      string // 当前启动器版本（main 注入，如 v0.1.0 / dev）
+	updLine          string
+	updCol           uint32
+	updDshAvail      bool // dsh 有新版
+	updLauncherAvail bool // 启动器有新版
+	updChecking      bool // 检查进行中
+	updBusy          bool // 升级执行中
 
 	logCh chan string // 日志行队列（后台 → UI 线程）
 	logCount int     // 日志框当前行数（限行用）
@@ -144,7 +154,7 @@ type layout struct {
 	closeBtn rect
 	card     rect
 	cardTxt  rect
-	lines    [4]rect
+	lines    [5]rect
 	pathLbl  rect
 	pathBox  rect
 	browse   rect
@@ -153,6 +163,7 @@ type layout struct {
 	logBox   rect
 	startBtn rect
 	stopBtn  rect
+	updateBtn rect
 	exitBtn  rect
 }
 
@@ -163,20 +174,21 @@ func (u *uiState) lay() layout {
 	L := layout{
 		titleBar: rect{0, 0, w, sc(44)},
 		closeBtn: rect{w - sc(56), 0, w, sc(44)},
-		card:     rect{sc(16), sc(60), w - sc(16), sc(196)},
+		card:     rect{sc(16), sc(60), w - sc(16), sc(216)},
 		cardTxt:  rect{sc(28), sc(68), w - sc(28), sc(92)},
-		pathLbl:  rect{sc(16), sc(208), sc(84), sc(232)},
-		pathBox:  rect{sc(84), sc(204), w - sc(316), sc(230)},
-		browse:   rect{w - sc(308), sc(202), w - sc(228), sc(232)},
-		install:  rect{w - sc(220), sc(202), w - sc(140), sc(232)},
-		move:     rect{w - sc(132), sc(202), w - sc(52), sc(232)},
-		logBox:   rect{sc(16), sc(244), w - sc(16), sc(404)},
-		startBtn: rect{sc(16), sc(418), sc(146), sc(458)},
-		stopBtn:  rect{sc(154), sc(418), sc(274), sc(458)},
-		exitBtn:  rect{w - sc(116), sc(418), w - sc(16), sc(458)},
+		pathLbl:  rect{sc(16), sc(228), sc(84), sc(252)},
+		pathBox:  rect{sc(84), sc(224), w - sc(316), sc(250)},
+		browse:   rect{w - sc(308), sc(222), w - sc(228), sc(252)},
+		install:  rect{w - sc(220), sc(222), w - sc(140), sc(252)},
+		move:     rect{w - sc(132), sc(222), w - sc(52), sc(252)},
+		logBox:   rect{sc(16), sc(264), w - sc(16), sc(424)},
+		startBtn: rect{sc(16), sc(438), sc(136), sc(478)},
+		stopBtn:  rect{sc(144), sc(438), sc(254), sc(478)},
+		updateBtn: rect{sc(262), sc(438), sc(382), sc(478)},
+		exitBtn:  rect{w - sc(116), sc(438), w - sc(16), sc(478)},
 	}
 	baseY := int32(100)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		L.lines[i] = rect{sc(28), sc(baseY + int32(i)*24), w - sc(28), sc(baseY + int32(i)*24 + 20)}
 	}
 	return L
@@ -191,7 +203,7 @@ var (
 	mainUI       *uiState // 单窗口应用
 )
 
-func Run() int {
+func Run(launcherVersion string) int {
 	lockUIThread() // 窗口线程必须锁定，否则消息循环读到别的线程队列 → 界面假死
 	if r, _, _ := pGetModuleHandleW.Call(0); r != 0 {
 		hInstance = syscall.Handle(r)
@@ -225,8 +237,14 @@ func Run() int {
 	if hwnd == 0 {
 		return 1
 	}
-	u := &uiState{hwnd: syscall.Handle(hwnd), buttons: map[btnKind]*btnUI{}}
-	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnMove, btnStart, btnStop, btnExit} {
+	u := &uiState{
+		hwnd:        syscall.Handle(hwnd),
+		buttons:     map[btnKind]*btnUI{},
+		launcherVer: launcherVersion,
+		updLine:     "更新     -",
+		updCol:      colTextDim,
+	}
+	for _, k := range []btnKind{btnClose, btnBrowse, btnInstall, btnMove, btnStart, btnStop, btnExit, btnUpdate} {
 		u.buttons[k] = &btnUI{kind: k}
 	}
 	mainUI = u
@@ -440,6 +458,8 @@ func (u *uiState) onCreate(hwnd syscall.Handle) {
 	})
 
 	go u.refreshStatus()
+	// 启动时自动检测一次升级（后台，不阻塞界面；失败仅记录日志）
+	u.checkUpdates()
 }
 
 func createEdit(parent syscall.Handle, rc *rect, id int32, style uint32) syscall.Handle {
@@ -482,6 +502,8 @@ func (u *uiState) hitBtn(x, y int32) btnKind {
 		return btnStart
 	case inRect(&L.stopBtn, x, y):
 		return btnStop
+	case inRect(&L.updateBtn, x, y):
+		return btnUpdate
 	case inRect(&L.exitBtn, x, y):
 		return btnExit
 	}
@@ -561,6 +583,8 @@ func (u *uiState) onClick(k btnKind) {
 		u.onStart()
 	case btnStop:
 		u.onStop()
+	case btnUpdate:
+		u.onUpdate()
 	}
 }
 

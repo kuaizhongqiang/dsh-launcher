@@ -77,6 +77,7 @@ func (u *uiState) paintAll(hdc syscall.Handle, w, h int32) {
 	u.paintButton(hdc, &L.move, u.buttons[btnMove], "移动", styleSec)
 	u.paintButton(hdc, &L.startBtn, u.buttons[btnStart], u.startLabel(), stylePrimary)
 	u.paintButton(hdc, &L.stopBtn, u.buttons[btnStop], "停止", styleSec)
+	u.paintButton(hdc, &L.updateBtn, u.buttons[btnUpdate], u.updateLabel(), styleSec)
 	u.paintButton(hdc, &L.exitBtn, u.buttons[btnExit], "退出", styleSec)
 	u.paintButton(hdc, &L.closeBtn, u.buttons[btnClose], "×", styleClose)
 }
@@ -117,22 +118,20 @@ func (u *uiState) paintCard(hdc syscall.Handle, L *layout) {
 		{u.npmLine, u.npmCol},
 		{u.dshLine, u.dshCol},
 		{u.portLine, u.portCol},
+		{u.updLine, u.updCol},
 	}
 	oldFont2, _, _ := pSelectObject.Call(uintptr(hdc), uintptr(u.fontUI))
 	for i, r := range rows {
 		rc := L.lines[i]
 		// 状态圆点
-		dotColor := colTextDim
-		if r.color == colGreen {
-			dotColor = colGreen
-		} else if r.color == colRed {
-			dotColor = colRed
-		}
 		dotBrush := u.brushSec
-		if dotColor == colGreen {
+		switch r.color {
+		case colGreen:
 			dotBrush = u.brushGreen
-		} else if dotColor == colRed {
+		case colRed:
 			dotBrush = u.brushRed
+		case colPrimary:
+			dotBrush = u.brushPri
 		}
 		cy := (rc.top + rc.bottom) / 2
 		fillCircle(hdc, rc.left+sc(u.dpi, 6), cy, sc(u.dpi, 4), dotBrush)
@@ -160,6 +159,20 @@ func (u *uiState) startLabel() string {
 	return "启动"
 }
 
+// updateLabel 返回「检查更新 / 一键升级」按钮的文案。
+func (u *uiState) updateLabel() string {
+	if u.updBusy {
+		return "升级中…"
+	}
+	if u.updChecking {
+		return "检查中…"
+	}
+	if u.updDshAvail || u.updLauncherAvail {
+		return "一键升级"
+	}
+	return "检查更新"
+}
+
 func (u *uiState) btnDisabled(k btnKind) bool {
 	switch k {
 	case btnStart:
@@ -168,6 +181,8 @@ func (u *uiState) btnDisabled(k btnKind) bool {
 		return u.isBusy() || !u.isRunning()
 	case btnInstall, btnBrowse, btnMove:
 		return u.isBusy()
+	case btnUpdate:
+		return u.isBusy() || u.updChecking || u.updBusy
 	}
 	return false
 }

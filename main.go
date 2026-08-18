@@ -1,5 +1,5 @@
 // dsh-launcher：本机原生 dsh（@deepseek-ai/dsh，npm 版）的安装 + 启动引导器。
-// 子命令：install / start（默认）/ status / --help。
+// 子命令：install / start（默认）/ stop / status / check-update / --help。
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"dsh-launcher/internal/log"
 	"dsh-launcher/internal/node"
 	"dsh-launcher/internal/ui"
+	"dsh-launcher/internal/update"
 	"dsh-launcher/internal/win"
 )
 
@@ -34,6 +35,8 @@ const usage = `dsh-launcher — 本机原生 dsh 的安装 / 启动引导器
                                             启动器退出不影响；已在运行则不重复启动）
   dsh-launcher.exe stop                     停止 dsh（按配置端口结束进程）
   dsh-launcher.exe status                   显示安装目录、版本与运行状态
+  dsh-launcher.exe check-update             检查升级：dsh（npm registry）与
+                                            启动器自身（GitHub Release）是否有新版
   dsh-launcher.exe --version | -v           显示版本
   dsh-launcher.exe --help | -h              显示本帮助
 
@@ -61,7 +64,7 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
 		// 无参数（双击 exe）→ 图形界面：状态展示 + 路径选择 + 安装 + 一键启动
-		os.Exit(ui.Run())
+		os.Exit(ui.Run(version))
 		return
 	}
 
@@ -80,6 +83,8 @@ func main() {
 		runStop()
 	case "status":
 		runStatus()
+	case "check-update":
+		runCheckUpdate()
 	default:
 		log.Raw(usage)
 		log.Error("未知命令：%s", args[0])
@@ -218,6 +223,34 @@ func runStatus() {
 		log.Info("运行状态：运行中（端口 %d 有响应）", cfg.Port)
 	} else {
 		log.Info("运行状态：未运行（端口 %d 无响应）", cfg.Port)
+	}
+}
+
+// runCheckUpdate 检查 dsh 与启动器自身是否有新版（检测只读，不执行升级）。
+func runCheckUpdate() {
+	cfg, _ := config.Load()
+	var dshCur string
+	if cfg != nil && cfg.IsInstalled() {
+		dshCur = cfg.DshVersion
+	}
+	spec := install.RegistrySpecFromConfig(cfg)
+	if dshCur == "" {
+		log.Info("dsh：未安装（先运行 dsh-launcher.exe install）")
+	} else if latest, hasUpd, err := update.CheckDsh(dshCur, spec); err != nil {
+		log.Error("dsh 升级检测失败：%v", err)
+	} else if hasUpd {
+		log.Info("dsh：当前 %s → 最新 %s（可升级，运行 install 即升级到最新）", dshCur, latest)
+	} else {
+		log.Info("dsh：当前 %s 已是最新", dshCur)
+	}
+
+	latest, hasUpd, err := update.CheckLauncher(version)
+	if err != nil {
+		log.Error("启动器升级检测失败：%v", err)
+	} else if hasUpd {
+		log.Info("启动器：当前 %s → 最新 %s（可升级，下载页 %s）", version, latest, update.LauncherReleaseURL)
+	} else {
+		log.Info("启动器：当前 %s 已是最新", version)
 	}
 }
 

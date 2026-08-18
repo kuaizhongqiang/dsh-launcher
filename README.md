@@ -24,6 +24,7 @@ A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](
 - 🛑 **Stop** — stops dsh by resolving the process on the configured port (GUI **停止** button / `stop` command)
 - 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive handled with copy+delete); refused while dsh is running
 - 🔍 **Environment status** — Node.js / npm / dsh versions, install state, port health
+- 🔔 **Upgrade check** — on startup and via the **检查更新** button, compares dsh (`@deepseek-ai/dsh` on the npm registry) and the launcher itself (latest GitHub Release) against what's installed; when a new version is found the status card highlights it and the button turns into **一键升级** — dsh is re-installed in place, the launcher opens its Release page
 - 📜 **Live log** — install & startup output streamed into the window
 - ⌨️ **CLI fallback** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` work from a terminal too
 - 🐋 **DeepSeek Harness icon** — the dsh whale, embedded as a multi-size `.ico`
@@ -50,6 +51,7 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
    - not installed → click **浏览… (Browse…)** to pick an install dir (or type one), then **启动** again to install & start automatically
 4. To relocate the installed dsh package, click **移动 (Move)** and pick a target directory (refused while dsh is running).
 5. Click **停止 (Stop)** to shut dsh down, or **退出 (Exit)** to close the launcher only — dsh keeps running in the background.
+6. Click **检查更新 (Check Updates)** to compare dsh and the launcher against their latest versions (also checked automatically on startup). When updates are available the button becomes **一键升级 (Upgrade)**: dsh is re-installed to the latest version in place, and a launcher upgrade opens its GitHub Release page.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
 
@@ -65,6 +67,7 @@ dsh-launcher.exe move --dir <dir>        # relocate the installed dsh package (r
 dsh-launcher.exe start [--no-browser]    # ensure dsh is running, open browser (idempotent)
 dsh-launcher.exe stop                    # stop dsh (kill the process listening on the port)
 dsh-launcher.exe status                  # show install dir / version / running state
+dsh-launcher.exe check-update            # check for updates: dsh (npm) and the launcher (GitHub Release)
 dsh-launcher.exe --version               # show version
 dsh-launcher.exe --help
 ```
@@ -182,6 +185,7 @@ git push origin v0.0.1
 | `npm install -g --prefix <dir>` | Install dir is explicit & recorded; npm global env untouched |
 | Registry mirror auto-switch | Probe `/-/ping` on primary vs npmmirror in parallel; slow/unreachable primary → mirror (domestic users) |
 | `move` = Rename, fallback copy+delete | Same-disk move is instant; cross-drive works via recursive copy |
+| Upgrade check over two channels | dsh via npm registry (`latest` dist-tag), launcher via GitHub Release API; check is read-only, upgrade reuses `install` / opens the Release page |
 | Config next to exe | Portable — copy exe + launcher.json together |
 | `CREATE_NO_WINDOW` on children | No console flash from node/npm under a windowsgui parent |
 | `BeginPaint` / `EndPaint` | Prevents WM_PAINT storms (`GetDC` never clears the invalid region) |

@@ -24,6 +24,7 @@
 - 🛑 **停止 dsh** — 按配置端口定位进程并结束（GUI「停止」按钮 / `stop` 命令）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
+- 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（npm registry 的 `@deepseek-ai/dsh`）与启动器自身（GitHub Release 最新版）；发现新版时状态卡片高亮提示，按钮变为「一键升级」——dsh 原地重新 install 到最新，启动器打开 Release 下载页
 - 📜 **实时日志** — 安装与启动输出实时显示在窗口内
 - ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` 照常可用
 - 🐋 **DeepSeek Harness 鲸鱼图标** — 以多尺寸 `.ico` 嵌入 exe
@@ -50,6 +51,7 @@
    - 未安装 → 先点**浏览…**选择安装目录（或直接输入），再点**启动**即可自动安装并启动
 4. 需要挪动 dsh 时，点**移动**并选择目标目录（dsh 运行中会拒绝）。
 5. 点**停止**结束 dsh；点**退出**只关闭启动器窗口——dsh 继续在后台运行。
+6. 点**检查更新**可立即比对 dsh 与启动器的最新版本（启动时也会自动检查一次）。发现新版后按钮变为**一键升级**：dsh 原地重装到最新版，启动器升级则打开 GitHub Release 页。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
 
@@ -61,6 +63,7 @@ dsh-launcher.exe move --dir <目录>        # 把已安装的 dsh 挪到新路�
 dsh-launcher.exe start [--no-browser]     # 确保 dsh 运行并打开浏览器（幂等）
 dsh-launcher.exe stop                     # 停止 dsh（结束监听端口的进程）
 dsh-launcher.exe status                   # 显示安装目录 / 版本 / 运行状态
+dsh-launcher.exe check-update             # 检查升级：dsh（npm）与启动器（GitHub Release）
 dsh-launcher.exe --version                # 显示版本
 dsh-launcher.exe --help
 ```
@@ -163,6 +166,7 @@ git push origin v0.0.1
 | 配置跟随 exe | 便携：exe + launcher.json 一起拷走 |
 | dsh 独立进程 | 启动器退出后 dsh 继续运行；按端口定位停止 |
 | `netstat` 端口 → PID → `taskkill` 停止 | 无需守护状态，幂等 |
+| 升级检测双通道 | dsh 走 npm registry（`latest` dist-tag）、启动器走 GitHub Release API；检测只读，升级动作复用 `install` / 打开 Release 页 |
 | 子进程一律 `CREATE_NO_WINDOW` | windowsgui 父进程下 node/npm 不弹控制台黑框 |
 | `BeginPaint` / `EndPaint` | 防止 WM_PAINT 风暴（`GetDC` 不清除无效区域） |
 | UI 看门狗 | UI 线程卡死 12 秒自动退出（模态对话框豁免） |
