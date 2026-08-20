@@ -2,13 +2,12 @@
 
 [![Release](https://img.shields.io/github/v/release/kuaizhongqiang/dsh-launcher?style=flat-square)](https://github.com/kuaizhongqiang/dsh-launcher/releases)
 [![License](https://img.shields.io/github/license/kuaizhongqiang/dsh-launcher?style=flat-square)](LICENSE)
-[![Go](https://img.shields.io/github/go-mod/go-version/kuaizhongqiang/dsh-launcher?style=flat-square)](go.mod)
 [![CI](https://img.shields.io/github/actions/workflow/status/kuaizhongqiang/dsh-launcher/release.yml?style=flat-square)](https://github.com/kuaizhongqiang/dsh-launcher/actions)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0a7dff?style=flat-square)]()
 
-A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh), npm edition). Double-click to open a dsh-styled dark GUI: check your environment, pick an install directory, install, and start dsh with one click.
+A single-file Windows launcher for **dsh** ([`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh), npm edition). Double-click `dsh-launcher.exe` to open a **desktop window**: check your environment, pick an install directory, install, and start dsh with one click.
 
-> Built with pure Go — zero runtime dependencies. Ships as one `dsh-launcher.exe`; copy it to any Windows PC and run.
+> **Same TS/JS stack as dsh web**: the UI consumes dsh's dsw design system (the same `--dsw-*` tokens). Packaged with Electron as a single-file exe — zero startup dependencies (Chromium + Node built in).
 
 [中文说明](README.zh-CN.md)
 
@@ -16,181 +15,134 @@ A single-file Windows launcher for the **native dsh CLI** ([`@deepseek-ai/dsh`](
 
 ![dsh-launcher GUI](assets/screenshot.png)
 
+> Screenshot from the early Go version; the TS/JS UI keeps the dsh web theme (aurora background / frosted card / pulsing status dots / button glow).
+
 ## Features
 
-- 🖥️ **Dark dsh-style GUI** — theme tokens taken from the dsh web UI (`#151517` background, `#5686FE` brand blue, 12px rounded corners)
-- ⚡ **One-click start** — installs dsh if missing (with a directory picker), then starts the server and opens your browser
+- 🪟 **Desktop window** — double-click opens a frameless window (custom title bar), **no browser required**
+- 📦 **Single file, zero dependencies** — Electron portable exe (~65 MB), Chromium + Node built in
+- 🎨 **dsh web visuals** — dsw design system: aurora background, frosted-glass card, pulsing status dots, button glow, indeterminate progress bar
+- ⚡ **One-click start** — installs dsh if missing (directory picker), then starts the server and opens your browser
 - 🕊️ **Detached server** — dsh runs as an independent process; closing the launcher window does **not** stop it. Starting again when dsh is already up just re-opens the browser
 - 🛑 **Stop** — stops dsh by resolving the process on the configured port (GUI **停止** button / `stop` command)
-- 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive handled with copy+delete); refused while dsh is running
+- 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive copy+delete); refused while dsh is running
 - 🔍 **Environment status** — Node.js / npm / dsh versions, install state, port health
-- 🔔 **Upgrade check** — on startup and via the **检查更新** button, compares dsh (`@deepseek-ai/dsh` on the npm registry) and the launcher itself (latest GitHub Release) against what's installed; when a new version is found the status card highlights it and the button turns into **一键升级** — dsh is re-installed in place, the launcher opens its Release page
-- 📜 **Live log** — install & startup output streamed into the window
-- ⌨️ **CLI fallback** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` work from a terminal too
-- 🐋 **DeepSeek Harness icon** — the dsh whale, embedded as a multi-size `.ico`
-- 🧩 **Plugin ecosystem** — carries the [dsh-plugins](dsh-plugins/) collection as a git submodule; contribute your own plugins via PR
+- 🔔 **Upgrade check** — compares dsh (`@deepseek-ai/dsh` on npm registry) and the launcher itself (GitHub Release) against what's installed
+- 📜 **Live log** — install & startup output streamed into the window (SSE)
+- ⌨️ **CLI fallback** — `install` / `move` / `start` / `stop` / `status` / `check-update` / `--version` / `--help`
+- 🧩 **Plugin ecosystem** — carries the [dsh-plugins](dsh-plugins/) collection as a git submodule (v0.5.0)
 
 ## Requirements
 
 - **Windows 10 / 11** (x64)
-- **Node.js** on the target machine: `^22.19 || >=24` — needed only to *run* dsh; the launcher itself is a standalone Go binary
+- **Node.js** on the target machine: `^22.19 || >=24` — needed only to *run* dsh; the launcher itself is self-contained
 - No Go toolchain, no npm global config, no environment variables on the target machine
 
 ## Download
 
-Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/kuaizhongqiang/dsh-launcher/releases). Releases are built automatically by GitHub Actions on `windows-latest` and published with the exe attached.
+Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/kuaizhongqiang/dsh-launcher/releases). Each release is built by GitHub Actions on `windows-latest` and attached to the release.
 
 ## Usage
 
-### GUI (double-click, recommended)
+### Desktop window (double-click, recommended)
 
-1. Double-click `dsh-launcher.exe` (or run it with no arguments).
-2. Read the environment status card (Node / npm / dsh / port).
-3. Click **启动 (Start)**:
-   - dsh already installed → starts it (or just opens the browser if it is already running); the button then reads "已运行"
-   - not installed → click **浏览… (Browse…)** to pick an install dir (or type one), then **启动** again to install & start automatically
-4. To relocate the installed dsh package, click **移动 (Move)** and pick a target directory (refused while dsh is running).
-5. Click **停止 (Stop)** to shut dsh down, or **退出 (Exit)** to close the launcher only — dsh keeps running in the background.
-6. Click **检查更新 (Check Updates)** to compare dsh and the launcher against their latest versions (also checked automatically on startup). When updates are available the button becomes **一键升级 (Upgrade)**: dsh is re-installed to the latest version in place, and a launcher upgrade opens its GitHub Release page.
+1. Double-click `dsh-launcher.exe` (or run with no args) → a desktop window opens.
+2. Check the "环境状态" card (Node / npm / dsh / port).
+3. Click **启动**:
+   - dsh installed → starts the service (or re-opens the browser if already running); the button turns into "已运行"
+   - Not installed → pick a directory with **浏览…** (or type one), then **启动** installs and starts automatically
+4. **移动** relocates the installed dsh package (refused while running).
+5. **停止** stops dsh; **×** closes only the window — dsh keeps running in the background.
+6. **检查更新** compares dsh and the launcher against the latest versions.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
 
 ### CLI
 
 ```powershell
-dsh-launcher.exe install [--dir <dir>] [--registry <url>] [--mirror] [--no-mirror]
-                        # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
-                        # --registry: explicit npm registry
-                        # --mirror:    force the China mirror (registry.npmmirror.com)
-                        # --no-mirror: disable auto-switch to the mirror
-dsh-launcher.exe move --dir <dir>        # relocate the installed dsh package (refused while running)
-dsh-launcher.exe start [--no-browser]    # ensure dsh is running, open browser (idempotent)
+dsh-launcher.exe install [--dir <dir>]   # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
+dsh-launcher.exe move --dir <dir>        # relocate dsh (refused while running)
+dsh-launcher.exe start [--no-browser]    # ensure dsh is running and open the browser (idempotent)
 dsh-launcher.exe stop                    # stop dsh (kill the process listening on the port)
-dsh-launcher.exe status                  # show install dir / version / running state
-dsh-launcher.exe check-update            # check for updates: dsh (npm) and the launcher (GitHub Release)
-dsh-launcher.exe --version               # show version
+dsh-launcher.exe status                  # install dir / version / running state
+dsh-launcher.exe check-update            # check dsh (npm) and launcher (GitHub Release)
+dsh-launcher.exe --version
 dsh-launcher.exe --help
 ```
 
-> dsh runs **detached**: `start` returns once dsh is up and the launcher may exit without affecting dsh. Use `stop` to shut it down.
+Logs go to `%TEMP%\dsh-launcher.log` (the windowed build has no console).
 
-### China download acceleration (mirror auto-switch)
+## Config (launcher.json)
 
-`install` pulls `@deepseek-ai/dsh` from the **npm registry** (default `registry.npmjs.org`), which is often slow for domestic users. The launcher therefore **probes both the primary registry and the npmmirror mirror** (`registry.npmmirror.com`) and picks the faster one — if the primary is unreachable or noticeably slower (≥3× and >500 ms), it automatically switches to the mirror; a failed `npm install` is also retried once with the other source.
-
-Control it with CLI flags or environment variables (CLI wins over env):
-
-| Flag | Env | Effect |
-|---|---|---|
-| `--registry <url>` | `DSH_LAUNCHER_NPM_REGISTRY` | explicit primary registry |
-| `--mirror` | `DSH_LAUNCHER_PREFER_MIRROR=1` | always use the mirror (no probing) |
-| `--no-mirror` | `DSH_LAUNCHER_NO_MIRROR=1` | never use the mirror |
-| — | `DSH_LAUNCHER_NPM_MIRROR` | custom mirror URL |
-
-The choice is logged (`下载源：…`), persisted in `launcher.json` (`registry` / `registryMirror` / `preferMirror`) and reused by the GUI's install button.
-
-Logs are written to `%TEMP%\dsh-launcher.log`.
-
-## Configuration (`launcher.json`)
-
-Created next to the exe on first `install` (portable — copy the exe together with its config):
+Created next to the exe on first `install` (portable — copy the exe and the config together):
 
 ```json
 {
   "dshInstallDir": "C:\\Users\\<user>\\AppData\\Local\\dsh",
-  "dshVersion": "0.1.0-rc.6",
+  "dshVersion": "0.1.0-rc.7",
   "port": 3080,
-  "installedAt": "2026-08-15T17:00:00+08:00",
-  "registry": "",
-  "registryMirror": "",
-  "preferMirror": false
+  "installedAt": "2026-08-20T20:08:35+08:00"
 }
 ```
 
-- `~/.dsh` (`DSH_HOME`) is **never** touched — your existing profiles / plugins / sessions stay intact.
-- Running `install` on a new machine overwrites the config with the new path.
-
-## Plugin ecosystem (dsh-plugins)
-
-dsh itself is plugin-ready: plugins live under `%DSH_HOME%\profiles\web\plugins\` and are mounted through the profile's `cordis.patch.yml`. This repo carries the community plugin collection as a **git submodule**:
-
-- Local checkout: [`dsh-plugins/`](dsh-plugins/)
-- GitHub: [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins)
-
-Each plugin package in the collection is self-contained (`install.ps1` + `plugins/`) and ships with an **installation skill** (`skills/install-<name>/SKILL.md`) that tells the dsh agent how to install it step by step. Install the skills once, then just ask in a dsh session:
-
-```powershell
-# from the dsh-plugins checkout
-powershell -ExecutionPolicy Bypass -File .\skills\install-skills.ps1
-# then in a dsh session: "install the describe-image plugin" (or /install-describe-image)
-```
-
-> dsh-launcher **never touches** `~/.dsh` (`DSH_HOME`): installing or using plugins is fully independent of the launcher.
-
-### Contribute your own plugin
-
-Built a plugin for your own use? Share it back — open a PR against the collection:
-
-1. Make the package self-contained: idempotent `install.ps1` + `plugins/<name>/` + `README.md`.
-2. Add a matching installation skill: `skills/install-<name>/SKILL.md` (see the collection's conventions in `skills/README.md`).
-3. Open a pull request against [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins).
-
-Once merged, refresh the submodule here:
-
-```powershell
-git submodule update --remote dsh-plugins
-git add dsh-plugins && git commit -m "chore: bump dsh-plugins submodule"
-```
+- **Never touches** `~/.dsh` (`DSH_HOME`) — your existing profiles / plugins / sessions stay as-is.
+- Running `install` on a new machine overwrites the install path in the config.
 
 ## Build from source
 
-Requires Go 1.22+.
+Requires Node.js 22+ (dev machine). No Go needed.
 
 ```powershell
-# One-command build (installs rsrc, generates icon resources, builds the exe)
-.\build.ps1 -Version v0.0.1        # release build (windowsgui, no console flash)
-.\build.ps1 -Debug                 # debug build with console output
+npm ci                      # dev deps (esbuild / electron / electron-builder)
+npm run check               # tsc --noEmit
+npm run build               # esbuild bundles → dist/
+npm run dist                # electron-builder portable → release\dsh-launcher.exe
 ```
 
-Manual steps:
+Dev modes:
 
 ```powershell
-go mod tidy
-go install github.com/akavel/rsrc@v0.10.2
-& (Join-Path (go env GOPATH) 'bin\rsrc.exe') -ico icon.ico -manifest app.manifest -o rsrc.syso
-go build -ldflags="-s -w -H windowsgui -X main.guiBuild=1 -X main.version=v0.0.1" -o dsh-launcher.exe .
+npm run start:desktop       # npx electron . (local window)
+npm run start               # plain Node CLI (node dist/launcher.cjs)
 ```
 
-Re-generate the icon from the source SVG:
+> **Size-sensitive alternative (Node SEA)**: `npm run dist:sea` builds a Node single-executable (~87 MB, embedded Node runtime, UI opens in the browser) — kept as a fallback; the default deliverable is the Electron portable.
 
-```powershell
-go run ./tools/svg2ico favicon.svg icon.ico preview.png
+## Architecture
+
 ```
-
-## Release workflow
-
-Pushing a `v*` tag triggers [GitHub Actions](.github/workflows/release.yml) — it builds, smoke-tests (`--version` / `--help`), uploads the artifact and publishes a GitHub Release with the exe attached:
-
-```powershell
-git tag v0.0.1
-git push origin v0.0.1
+src/                          TS logic (shared by CLI and Electron)
+├── config.ts                 launcher.json read/write (portable: follows the exe)
+├── node.ts                   node/npm detection, registry mirror strategy, install
+├── install.ts                install / move flows
+├── launch.ts                 start/stop (detached process, port-based kill)
+├── update.ts                 upgrade checks (npm registry + GitHub Release)
+├── server.ts                 local node:http service (UI assets + REST bridge + SSE logs)
+├── cli.ts                    CLI entry
+├── electron-main.ts          Electron main (window + CLI dual mode)
+└── electron-preload.ts       window controls bridge (minimize)
+ui/                           Web UI (dsh web dsw design system)
+├── tokens.css                design tokens extracted from @deepseek-ai/dsh-client-ui-theme
+├── launcher.css              UI styles (tokens only)
+└── index.html / app.js       page + logic (bridge-injected; mock/real auto-switch)
+scripts/
+├── build.mjs                 esbuild bundling
+├── build-sea.mjs             Node SEA fallback build
+└── extract-dsw-tokens.mjs    re-extract dsw design tokens
 ```
 
 ## Design notes
 
 | Decision | Why |
 |---|---|
-| Single Go exe | Static compile, zero runtime deps, double-click to run |
-| Detached dsh process | dsh keeps running after the launcher exits; stop via port lookup |
-| `npm install -g --prefix <dir>` | Install dir is explicit & recorded; npm global env untouched |
-| Registry mirror auto-switch | Probe `/-/ping` on primary vs npmmirror in parallel; slow/unreachable primary → mirror (domestic users) |
-| `move` = Rename, fallback copy+delete | Same-disk move is instant; cross-drive works via recursive copy |
-| Upgrade check over two channels | dsh via npm registry (`latest` dist-tag), launcher via GitHub Release API; check is read-only, upgrade reuses `install` / opens the Release page |
-| Config next to exe | Portable — copy exe + launcher.json together |
-| `CREATE_NO_WINDOW` on children | No console flash from node/npm under a windowsgui parent |
-| `BeginPaint` / `EndPaint` | Prevents WM_PAINT storms (`GetDC` never clears the invalid region) |
-| UI watchdog | A stuck UI thread auto-exits after 30 s (modal dialogs exempt) |
-| `ExtractIconExW` for the icon | Not tied to a fragile resource ID |
+| TS/JS, same stack as dsh | UI consumes the dsw design system directly; logic reusable/pluggable; one language to maintain |
+| Electron portable single file | Meets "single file + zero-dependency startup + desktop window"; Chromium + Node built in |
+| UI served via local http | Main process runs `node:http`; BrowserWindow loads it — browser and desktop forms share one frontend |
+| Frameless custom title bar | Matches dsh style; custom drag/close/minimize |
+| `PORTABLE_EXECUTABLE_DIR` | electron-builder portable exposes the exe dir → config follows the exe (portable) |
+| dsh as detached process | Launcher exit doesn't stop dsh; port-based stop |
+| Streamed npm output | Every line pushed to the window via log subscription (SSE) |
+| SEA fallback kept | Size-sensitive deployments can degrade to an embedded-Node single file (browser UI) |
 
 ## License
 

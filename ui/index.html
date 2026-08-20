@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dsh-launcher</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body data-ds-dark-theme>
+
+  <!-- 背景极光（纯装饰） -->
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora-blob aurora-blob-1"></div>
+    <div class="aurora-blob aurora-blob-2"></div>
+    <div class="aurora-blob aurora-blob-3"></div>
+  </div>
+
+  <!-- 应用窗口 -->
+  <div class="app-window" id="appWindow">
+
+    <!-- 标题栏 -->
+    <header class="titlebar">
+      <img class="logo" src="favicon.svg" alt="dsh" draggable="false">
+      <span class="title">dsh-launcher</span>
+      <span class="version" id="ver">v0.2.0</span>
+      <button class="btn btn-icon btn-min" id="btnMin" title="最小化" aria-label="最小化" hidden>─</button>
+      <button class="btn btn-icon btn-close" id="btnClose" title="关闭" aria-label="关闭">×</button>
+    </header>
+
+    <main class="content">
+
+      <!-- 环境状态卡片 -->
+      <section class="card status-card">
+        <h2 class="card-title">环境状态</h2>
+        <ul class="status-rows">
+          <li class="status-row" data-key="node">
+            <span class="dot dot-dim"></span>
+            <span class="row-label">Node.js</span>
+            <span class="row-value" data-field="node">检测中…</span>
+          </li>
+          <li class="status-row" data-key="npm">
+            <span class="dot dot-dim"></span>
+            <span class="row-label">npm</span>
+            <span class="row-value" data-field="npm">检测中…</span>
+          </li>
+          <li class="status-row" data-key="dsh">
+            <span class="dot dot-dim"></span>
+            <span class="row-label">dsh</span>
+            <span class="row-value" data-field="dsh">检测中…</span>
+          </li>
+          <li class="status-row" data-key="port">
+            <span class="dot dot-dim"></span>
+            <span class="row-label">端口</span>
+            <span class="row-value" data-field="port">—</span>
+          </li>
+          <li class="status-row" data-key="update">
+            <span class="dot dot-dim"></span>
+            <span class="row-label">更新</span>
+            <span class="row-value" data-field="update">检查中…</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 安装目录行 -->
+      <section class="path-row">
+        <label class="path-label" for="pathInput">安装目录</label>
+        <input id="pathInput" class="path-input" type="text" spellcheck="false"
+               value="C:\Users\kua\AppData\Local\dsh">
+        <div class="path-actions">
+          <button class="btn btn-sec" id="btnBrowse">浏览…</button>
+          <button class="btn btn-sec" id="btnInstall">安装</button>
+          <button class="btn btn-sec" id="btnMove">移动</button>
+        </div>
+      </section>
+
+      <!-- 日志控制台 -->
+      <section class="card log-panel">
+        <div class="log" id="log" aria-live="polite"></div>
+      </section>
+
+      <!-- 底部操作栏 -->
+      <footer class="action-bar">
+        <button class="btn btn-primary" id="btnStart">启动</button>
+        <button class="btn btn-sec" id="btnStop" disabled>停止</button>
+        <button class="btn btn-sec" id="btnUpdate">检查更新</button>
+        <div class="action-spacer"></div>
+        <button class="btn btn-ghost" id="btnExit">退出</button>
+      </footer>
+
+      <!-- 安装进度条（不定进度，默认隐藏） -->
+      <div class="progress" id="progress" hidden>
+        <div class="progress-track"><div class="progress-bar"></div></div>
+        <span class="progress-text" id="progressText">安装中…</span>
+      </div>
+
+    </main>
+  </div>
+
+  <div class="proto-badge">视觉原型 · 模拟数据 · 浏览器预览</div>
+
+  <script src="app.js"></script>
+</body>
+</html>

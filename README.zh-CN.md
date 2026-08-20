@@ -2,38 +2,37 @@
 
 [![Release](https://img.shields.io/github/v/release/kuaizhongqiang/dsh-launcher?style=flat-square)](https://github.com/kuaizhongqiang/dsh-launcher/releases)
 [![License](https://img.shields.io/github/license/kuaizhongqiang/dsh-launcher?style=flat-square)](LICENSE)
-[![Go](https://img.shields.io/github/go-mod/go-version/kuaizhongqiang/dsh-launcher?style=flat-square)](go.mod)
-[![CI](https://img.shields.io/github/actions/workflow/status/kuaizhongqiang/dsh-launcher/release.yml?style=flat-square)](https://github.com/kuaizhongqiang/dsh-launcher/actions)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0a7dff?style=flat-square)]()
 
-本机原生 dsh CLI（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm 版）的 **Windows 单文件安装 + 启动引导器**。双击即可打开 dsh 风格的深色图形界面：查看环境状态、选择安装目录、安装、一键启动。
+dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm 版）的 **Windows 单文件安装 + 启动引导器**。双击 `dsh-launcher.exe` 即弹出桌面窗口：查看环境状态、选择安装目录、安装、一键启动。
 
-> 纯 Go 构建，零运行时依赖。最终产物是一个 `dsh-launcher.exe`，拷到任何 Windows 电脑即可使用。
-
-[English](README.md)
+> **TS/JS 技术栈，与 dsh web 同源**：界面直接消费 dsh 的 dsw 设计系统（同一套 `--dsw-*` 令牌），Electron 打包为单文件 exe，启动零依赖（内置 Chromium + Node）。
 
 ## 截图
 
 ![dsh-launcher GUI](assets/screenshot.png)
 
+> 截图来自早期 Go 版；TS/JS 版界面视觉沿用 dsh web 主题（极光背景 / 毛玻璃卡片 / 脉冲状态点 / 按钮辉光）。
+
 ## 特性
 
-- 🖥️ **dsh 风格深色 GUI** — 主题色取自 dsh web 界面（背景 `#151517`、品牌蓝 `#5686FE`、12px 圆角）
+- 🪟 **桌面窗口** — 双击 exe 弹出 frameless 窗口（自绘标题栏），**不依赖浏览器**
+- 📦 **单文件零依赖** — Electron portable 单 exe（约 65MB），内置 Chromium + Node，启动无需任何外部运行时
+- 🎨 **dsh web 同款视觉** — dsw 设计系统：背景极光、毛玻璃卡片、脉冲状态点、按钮辉光、不定进度条
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
 - 🕊️ **独立运行** — dsh 以独立进程运行，关闭启动器窗口**不会**停止 dsh；再次点启动（已在运行）只是重新打开浏览器
-- 🛑 **停止 dsh** — 按配置端口定位进程并结束（GUI「停止」按钮 / `stop` 命令）
+- 🛑 **停止 dsh** — 按配置端口定位进程并结束（窗口「停止」按钮 / `stop` 命令）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
-- 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（npm registry 的 `@deepseek-ai/dsh`）与启动器自身（GitHub Release 最新版）；发现新版时状态卡片高亮提示，按钮变为「一键升级」——dsh 原地重新 install 到最新，启动器打开 Release 下载页
-- 📜 **实时日志** — 安装与启动输出实时显示在窗口内
-- ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `--version` / `--help` 照常可用
-- 🐋 **DeepSeek Harness 鲸鱼图标** — 以多尺寸 `.ico` 嵌入 exe
-- 🧩 **插件生态** — 以 git 子模块携带 [dsh-plugins](dsh-plugins/) 插件合集；自建插件可通过 PR 贡献
+- 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（npm registry 的 `@deepseek-ai/dsh`）与启动器自身（GitHub Release 最新版）
+- 📜 **实时日志** — 安装与启动输出实时显示在窗口内（SSE 推送）
+- ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `check-update` / `--version` / `--help` 照常可用
+- 🧩 **插件生态** — 以 git 子模块携带 [dsh-plugins](dsh-plugins/) 插件合集（当前 v0.5.0）
 
 ## 环境要求
 
 - **Windows 10 / 11**（x64）
-- 目标机器需安装 **Node.js**：`^22.19 || >=24`（仅在运行 dsh 时需要；启动器本身是独立 Go 二进制）
+- 目标机器需安装 **Node.js**：`^22.19 || >=24`（仅在运行 dsh 时需要；启动器本身自包含）
 - 目标机器无需 Go、无需 npm 全局配置、无需环境变量
 
 ## 下载
@@ -42,16 +41,16 @@
 
 ## 使用
 
-### 图形界面（双击，推荐）
+### 桌面窗口（双击，推荐）
 
-1. 双击 `dsh-launcher.exe`（或命令行无参运行）。
+1. 双击 `dsh-launcher.exe`（或命令行无参运行）→ 弹出桌面窗口。
 2. 查看"环境状态"卡片（Node / npm / dsh / 端口）。
 3. 点击**启动**：
    - 已安装 dsh → 启动服务（已在运行则直接打开浏览器），按钮变为"已运行"
    - 未安装 → 先点**浏览…**选择安装目录（或直接输入），再点**启动**即可自动安装并启动
 4. 需要挪动 dsh 时，点**移动**并选择目标目录（dsh 运行中会拒绝）。
-5. 点**停止**结束 dsh；点**退出**只关闭启动器窗口——dsh 继续在后台运行。
-6. 点**检查更新**可立即比对 dsh 与启动器的最新版本（启动时也会自动检查一次）。发现新版后按钮变为**一键升级**：dsh 原地重装到最新版，启动器升级则打开 GitHub Release 页。
+5. 点**停止**结束 dsh；点 **×** 只关闭窗口——dsh 继续在后台运行。
+6. 点**检查更新**可立即比对 dsh 与启动器的最新版本。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
 
@@ -70,18 +69,18 @@ dsh-launcher.exe --help
 
 > dsh **独立运行**：`start` 在 dsh 就绪后即返回，启动器退出不影响 dsh；用 `stop` 停止。
 
-日志写入 `%TEMP%\dsh-launcher.log`。
+日志写入 `%TEMP%\dsh-launcher.log`（窗口版无控制台，以此为准）。
 
 ## 配置（launcher.json）
 
-首次 `install` 时生成在 exe 同目录（便携：exe 与配置一起拷走）：
+首次 `install` 时生成在 **exe 同目录**（便携：exe 与配置一起拷走）：
 
 ```json
 {
   "dshInstallDir": "C:\\Users\\<user>\\AppData\\Local\\dsh",
-  "dshVersion": "0.1.0-rc.6",
+  "dshVersion": "0.1.0-rc.7",
   "port": 3080,
-  "installedAt": "2026-08-15T17:00:00+08:00"
+  "installedAt": "2026-08-20T20:08:35+08:00"
 }
 ```
 
@@ -91,86 +90,78 @@ dsh-launcher.exe --help
 ## 插件生态（dsh-plugins）
 
 dsh 本身支持插件：插件放在 `%DSH_HOME%\profiles\web\plugins\`，通过 profile 的
-`cordis.patch.yml` 挂载。本仓库以 **git 子模块**方式携带社区插件合集：
+`cordis.patch.yml` 挂载。本仓库以 **git 子模块**方式携带社区插件合集（当前 **v0.5.0**）：
 
 - 本地检出：[`dsh-plugins/`](dsh-plugins/)
 - GitHub：[kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins)
 
 合集里每个插件包都自包含（`install.ps1` + `plugins/`），并配套一个**安装技能**
 （`skills/install-<name>/SKILL.md`），告诉 dsh 的 Agent 如何一步步安装。
-技能只装一次，之后在 dsh 会话里直接说需求即可：
 
-```powershell
-# 在 dsh-plugins 检出目录下
-powershell -ExecutionPolicy Bypass -File .\skills\install-skills.ps1
-# 然后在 dsh 会话里说：“安装 describe-image 插件”（或 /install-describe-image）
-```
-
-> dsh-launcher **绝不触碰** `~/.dsh`（`DSH_HOME`）：插件的安装与使用与启动器完全独立。
-
-### 贡献自建插件
-
-自建了插件？欢迎回馈合集——向插件合集提交 Pull Request：
-
-1. 把插件做成自包含包：幂等的 `install.ps1` + `plugins/<name>/` + `README.md`
-2. 配套安装技能：`skills/install-<name>/SKILL.md`（约定见合集的 `skills/README.md`）
-3. 向 [kuaizhongqiang/dsh-plugins](https://github.com/kuaizhongqiang/dsh-plugins) 提交 Pull Request
-
-合并后，刷新本仓库的子模块：
+更新子模块：
 
 ```powershell
 git submodule update --remote dsh-plugins
 git add dsh-plugins && git commit -m "chore: bump dsh-plugins submodule"
 ```
 
+> dsh-launcher **绝不触碰** `~/.dsh`（`DSH_HOME`）：插件的安装与使用与启动器完全独立。
+
 ## 从源码构建
 
-需要 Go 1.22+。
+需要 Node.js 22+（开发机）。无 Go 依赖。
 
 ```powershell
-# 一键构建（自动安装 rsrc、生成图标资源、构建 exe）
-.\build.ps1 -Version v0.0.1        # 正式版（windowsgui，双击不闪黑框）
-.\build.ps1 -Debug                 # 调试版（带控制台，直接看 stdout）
+npm ci                      # 安装开发依赖（esbuild / electron / electron-builder）
+npm run check               # TypeScript 类型检查
+npm run build               # esbuild 打包（dist/launcher.cjs + electron-main + preload）
+npm run dist                # electron-builder 打包单文件：release\dsh-launcher.exe
 ```
 
-手动步骤：
+开发模式直接跑桌面窗口：
 
 ```powershell
-go mod tidy
-go install github.com/akavel/rsrc@v0.10.2
-& (Join-Path (go env GOPATH) 'bin\rsrc.exe') -ico icon.ico -manifest app.manifest -o rsrc.syso
-go build -ldflags="-s -w -H windowsgui -X main.guiBuild=1 -X main.version=v0.0.1" -o dsh-launcher.exe .
+npm run start:desktop       # npx electron .（本地窗口，走 dev 逻辑）
+npm run start               # 纯 Node CLI（node dist/launcher.cjs）
 ```
 
-从 SVG 源重新生成图标：
+> **体积敏感备选（Node SEA）**：`npm run dist:sea` 用 Node 单文件可执行（约 87MB，内嵌 Node 运行时，但界面需浏览器打开）——保留为备选路线，默认交付为 Electron portable。
 
-```powershell
-go run ./tools/svg2ico favicon.svg icon.ico preview.png
+## 技术架构
+
 ```
-
-## 发布流程
-
-推送 `v*` 标签即触发 [GitHub Actions](.github/workflows/release.yml)：构建 → 冒烟测试（`--version` / `--help`）→ 上传构建产物 → 发布 GitHub Release（附带 exe）：
-
-```powershell
-git tag v0.0.1
-git push origin v0.0.1
+src/                          TS 逻辑（与语言无关，Node/Electron 通用）
+├── config.ts                 launcher.json 读写（便携：跟随 exe）
+├── node.ts                   node/npm 探测、registry 镜像策略、安装
+├── install.ts                install / move 流程
+├── launch.ts                 start/stop（独立进程、端口定位）
+├── update.ts                 升级检测（npm registry + GitHub Release）
+├── server.ts                 node:http 本地服务（UI 静态资源 + REST bridge + SSE 日志）
+├── cli.ts                    命令行入口
+├── electron-main.ts          Electron 主进程（窗口 + CLI 双模式）
+└── electron-preload.ts       窗口控制桥（最小化）
+ui/                           Web 界面（dsh web 同款 dsw 设计系统）
+├── tokens.css                从 @deepseek-ai/dsh-client-ui-theme 提取的设计令牌（脚本可再生成）
+├── launcher.css              界面样式（只消费令牌）
+├── index.html / app.js       页面 + 逻辑（bridge 注入，模拟/真实自动切换）
+scripts/
+├── build.mjs                 esbuild 打包
+├── build-sea.mjs             Node SEA 备选构建
+└── extract-dsw-tokens.mjs    重新提取 dsw 设计令牌
 ```
 
 ## 设计要点
 
 | 决策 | 理由 |
 |---|---|
-| Go 单 exe | 静态编译、零运行时依赖、双击即用 |
-| `npm install -g --prefix <dir>` | 安装目录显式可记录，不污染 npm 全局环境 |
-| 配置跟随 exe | 便携：exe + launcher.json 一起拷走 |
+| TS/JS 与 dsh 同栈 | 界面直接消费 dsw 设计系统；逻辑可复用/可插件化；单一语言维护 |
+| Electron portable 单文件 | 满足"单一文件 + 启动零依赖 + 桌面窗口"；内置 Chromium + Node |
+| UI 走本地 http 服务 | 主进程 `node:http` 服务 + BrowserWindow 加载；浏览器/桌面窗口形态共用一套前端 |
+| frameless 自绘标题栏 | 与 dsh 风格统一，自绘拖动区/关闭/最小化 |
+| `PORTABLE_EXECUTABLE_DIR` | electron-builder portable 提供 exe 所在目录，配置跟随 exe（便携） |
 | dsh 独立进程 | 启动器退出后 dsh 继续运行；按端口定位停止 |
-| `netstat` 端口 → PID → `taskkill` 停止 | 无需守护状态，幂等 |
-| 升级检测双通道 | dsh 走 npm registry（`latest` dist-tag）、启动器走 GitHub Release API；检测只读，升级动作复用 `install` / 打开 Release 页 |
-| 子进程一律 `CREATE_NO_WINDOW` | windowsgui 父进程下 node/npm 不弹控制台黑框 |
-| `BeginPaint` / `EndPaint` | 防止 WM_PAINT 风暴（`GetDC` 不清除无效区域） |
-| UI 看门狗 | UI 线程卡死 12 秒自动退出（模态对话框豁免） |
-| 图标用 `ExtractIconExW` | 不依赖脆弱的资源 ID |
+| npm 安装流式输出 | 每行经日志订阅推送到窗口（SSE），实时可见 |
+| SEA 备选保留 | 体积敏感场景可退化为内嵌 Node 的单文件（界面走浏览器） |
 
 ## License
 

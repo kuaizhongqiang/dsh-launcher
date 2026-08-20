@@ -1,0 +1,58 @@
+{
+  "name": "dsh-launcher",
+  "version": "0.2.0",
+  "description": "dsh (@deepseek-ai/dsh) 本机安装 + 启动引导器 —— TS/JS，Electron 桌面窗口单文件版",
+  "type": "module",
+  "main": "dist/electron-main.cjs",
+  "license": "MIT",
+  "bin": {
+    "dsh-launcher": "dist/launcher.cjs"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "start": "node dist/launcher.cjs",
+    "start:desktop": "electron .",
+    "dist": "node scripts/build.mjs && electron-builder --win portable",
+    "dist:sea": "node scripts/build.mjs && node scripts/build-sea.mjs"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "build": {
+    "appId": "com.deepseek.dsh-launcher",
+    "productName": "dsh-launcher",
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "icon.ico"
+    },
+    "portable": {
+      "artifactName": "dsh-launcher.exe"
+    },
+    "asar": true,
+    "npmRebuild": false,
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6",
+    "resedit": "^3.0.2",
+    "typescript": "^5.8.0"
+  }
+}
