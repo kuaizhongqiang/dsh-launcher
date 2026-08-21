@@ -107,6 +107,9 @@ function setValue(key, text, cls = '') {
 
 async function refreshStatus() {
   const s = await bridge.getStatus();
+  // 同步状态，供按钮启用/文案使用（此前只更新显示、未同步 state）
+  state.installed = s.dsh.installed;
+  state.running = s.port.running;
   if (s.node.present) {
     setValue('node', 'Node.js  ' + s.node.version);
     setDot('node', 'dot-green');
@@ -183,9 +186,9 @@ async function onStart() {
   log('启动 dsh…', 'brand');
   try {
     const r = await bridge.start();
-    if (!r.ok) throw new Error('启动失败');
+    if (!r.ok) throw new Error(r.message || '启动失败');
     state.running = true;
-    log('dsh 已启动并独立运行（关闭本窗口不影响 dsh）。', 'ok');
+    log(r.already ? 'dsh 已在运行，已打开浏览器。' : 'dsh 已启动并独立运行（关闭本窗口不影响 dsh）。', 'ok');
   } catch (e) {
     log('启动失败：' + e.message, 'err');
   }
@@ -199,7 +202,8 @@ async function onStop() {
   setBusy(true);
   log('停止 dsh（端口 3080）…', 'brand');
   try {
-    await bridge.stop();
+    const r = await bridge.stop();
+    if (!r.ok) throw new Error(r.message || '停止失败');
     state.running = false;
     log('已停止 dsh。', 'ok');
   } catch (e) {
@@ -218,7 +222,8 @@ async function onInstall() {
   setProgress(true, '安装中…');
   log('开始安装到 ' + dir + ' …', 'brand');
   try {
-    await bridge.install(dir);
+    const r = await bridge.install(dir);
+    if (!r.ok) throw new Error(r.message || '安装失败');
     state.installed = true;
     log('安装完成。可以点击「启动」。', 'ok');
   } catch (e) {
@@ -237,7 +242,8 @@ async function onMove() {
   setBusy(true);
   log('移动 dsh 到 ' + dir + ' …', 'brand');
   try {
-    await bridge.move(dir);
+    const r = await bridge.move(dir);
+    if (!r.ok) throw new Error(r.message || '移动失败');
     $('pathInput').value = dir;
     log('移动完成。', 'ok');
   } catch (e) {
@@ -264,7 +270,10 @@ async function onUpdate() {
   try {
     const r = await bridge.checkUpdate();
     if (r.dshAvail || r.launcherAvail) {
-      log('发现新版本，按钮已变为「一键升级」。', 'warn');
+      const parts = [];
+      if (r.dshAvail) parts.push('dsh → ' + (r.dshLatest || '最新'));
+      if (r.launcherAvail) parts.push('启动器 → ' + (r.launcherLatest || '最新'));
+      log('发现新版本（' + parts.join('；') + '）。dsh 运行「安装」即升级，启动器到 GitHub Release 下载。', 'warn');
     } else {
       log('dsh 与启动器均已是最新。', 'ok');
     }
@@ -278,7 +287,15 @@ async function onUpdate() {
 
 function onExit() {
   log('dsh 仍在后台运行（独立进程）。关闭窗口不影响 dsh。', 'dim');
-  setTimeout(() => { log('（原型模式不真正退出）', ''); }, 400);
+  // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit）
+  if (window.electronWindow && window.electronWindow.close) {
+    window.electronWindow.close();
+    return;
+  }
+  // 浏览器 / SEA 版：调用后端 /api/exit 结束本服务
+  if (bridge.exit) {
+    void bridge.exit();
+  }
 }
 
 /* ---------- 启动 ---------- */

@@ -71,14 +71,24 @@ async function runDesktop(): Promise<void> {
     return { action: 'deny' };
   });
 
-  await win.loadURL(server.url);
+  // ready-to-show 必须在 loadURL 之前注册：本地 UI 是内嵌内存资源、响应极快，
+  // 事件可能在 loadURL 的 Promise resolve 前就已触发，注册晚了窗口永不显示。
   win.once('ready-to-show', () => win.show());
+
+  await win.loadURL(server.url);
+  // 兜底：若 ready-to-show 已错过（页面早已渲染完成），直接显示。
+  if (!win.isVisible()) win.show();
+
   win.on('closed', () => app.quit());
 }
 
 /** 窗口控制 IPC（最小化等），供 preload 使用。 */
 ipcMain.on('win:minimize', (e) => {
   BrowserWindow.fromWebContents(e.sender)?.minimize();
+});
+
+ipcMain.on('win:close', (e) => {
+  BrowserWindow.fromWebContents(e.sender)?.close();
 });
 
 // ---------- 入口 ----------

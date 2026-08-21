@@ -65,6 +65,7 @@ const bridgeScript = `<script>
     move: function (dir) { return api('/api/move', { dir: dir }); },
     checkUpdate: function () { return api('/api/check-update', {}); },
     browse: function () { return api('/api/browse', {}).then(function (r) { return r.dir; }); },
+    exit: function () { return api('/api/exit', {}); },
     defaultDir: ${JSON.stringify(defaultInstallDir())},
   };
   var es = new EventSource('/api/events');
@@ -90,7 +91,9 @@ interface Asset {
 }
 
 const assets: Record<string, Asset> = {
-  '/': { type: 'text/html; charset=utf-8', content: indexHtml.replace('</body>', bridgeScript + '</body>') },
+  // 桥接脚本必须注入在 </head> 前（而非 </body> 前）：index.html 的 app.js 是同步
+  // script，若桥接注入到其后，app.js 执行时 window.launcherBridge 尚未定义，会回退到 mock。
+  '/': { type: 'text/html; charset=utf-8', content: indexHtml.replace('</head>', bridgeScript + '</head>') },
   '/index.html': { type: 'text/html; charset=utf-8', content: '' },
   '/tokens.css': { type: 'text/css; charset=utf-8', content: tokensCss },
   '/launcher.css': { type: 'text/css; charset=utf-8', content: launcherCss },
