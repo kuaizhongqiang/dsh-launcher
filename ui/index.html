@@ -23,7 +23,7 @@
     <header class="titlebar">
       <img class="logo" src="favicon.svg" alt="dsh" draggable="false">
       <span class="title">dsh-launcher</span>
-      <span class="version" id="ver">v0.2.0</span>
+      <span class="version" id="ver">v0.3.1</span>
       <button class="btn btn-icon btn-min" id="btnMin" title="最小化" aria-label="最小化" hidden>─</button>
       <button class="btn btn-icon btn-close" id="btnClose" title="关闭" aria-label="关闭">×</button>
     </header>
@@ -37,27 +37,27 @@
           <li class="status-row" data-key="node">
             <span class="dot dot-dim"></span>
             <span class="row-label">Node.js</span>
-            <span class="row-value" data-field="node">检测中…</span>
+            <span class="row-value" id="node" data-field="node">检测中…</span>
           </li>
           <li class="status-row" data-key="npm">
             <span class="dot dot-dim"></span>
             <span class="row-label">npm</span>
-            <span class="row-value" data-field="npm">检测中…</span>
+            <span class="row-value" id="npm" data-field="npm">检测中…</span>
           </li>
           <li class="status-row" data-key="dsh">
             <span class="dot dot-dim"></span>
             <span class="row-label">dsh</span>
-            <span class="row-value" data-field="dsh">检测中…</span>
+            <span class="row-value" id="dsh" data-field="dsh">检测中…</span>
           </li>
           <li class="status-row" data-key="port">
             <span class="dot dot-dim"></span>
             <span class="row-label">端口</span>
-            <span class="row-value" data-field="port">—</span>
+            <span class="row-value" id="port" data-field="port">—</span>
           </li>
           <li class="status-row" data-key="update">
             <span class="dot dot-dim"></span>
             <span class="row-label">更新</span>
-            <span class="row-value" data-field="update">检查中…</span>
+            <span class="row-value" id="update" data-field="update">检查中…</span>
           </li>
         </ul>
       </section>

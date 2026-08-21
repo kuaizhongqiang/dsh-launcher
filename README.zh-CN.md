@@ -18,6 +18,7 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 
 - 🪟 **桌面窗口** — 双击 exe 弹出 frameless 窗口（自绘标题栏），**不依赖浏览器**
 - 📦 **单文件零依赖** — Electron portable 单 exe（约 65MB），内置 Chromium + Node，启动无需任何外部运行时
+- 📥 **两种构建** — 便携单文件（随处拷走）**与** NSIS 安装版（可固定到任务栏、带开始菜单快捷方式）
 - 🎨 **dsh web 同款视觉** — dsw 设计系统：背景极光、毛玻璃卡片、脉冲状态点、按钮辉光、不定进度条
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
 - 🕊️ **独立运行** — dsh 以独立进程运行，关闭启动器窗口**不会**停止 dsh；再次点启动（已在运行）只是重新打开浏览器
@@ -37,7 +38,12 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 
 ## 下载
 
-从 [Releases 页面](https://github.com/kuaizhongqiang/dsh-launcher/releases) 获取最新 `dsh-launcher.exe`。每次发布由 GitHub Actions 在 `windows-latest` 上自动构建并附带 exe 发布。
+从 [Releases 页面](https://github.com/kuaizhongqiang/dsh-launcher/releases) 获取最新构建。每次发布由 GitHub Actions 在 `windows-latest` 上自动构建并附带**两个**产物：
+
+| 产物 | 适用场景 |
+|---|---|
+| `dsh-launcher.exe`（便携版） | 随处拷走即用，不写系统——**无法固定到任务栏**（Windows 限制：便携版把程序解压到临时目录、退出即删，固定出的快捷方式会失效） |
+| `dsh-launcher-setup-<版本>.exe`（NSIS 安装版） | 安装到固定路径，带开始菜单快捷方式，**可固定到任务栏**——需要固定时用这个 |
 
 ## 使用
 
@@ -53,6 +59,8 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 6. 点**检查更新**可立即比对 dsh 与启动器的最新版本。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
+>
+> **固定到任务栏**：便携版在临时目录中运行、退出即删，固定出的任务栏图标会丢失目标（"快捷方式丢失"）。要固定请安装 NSIS 版（`dsh-launcher-setup-<版本>.exe`）后固定安装好的启动器。
 
 ### 命令行
 
@@ -116,6 +124,8 @@ npm ci                      # 安装开发依赖（esbuild / electron / electron
 npm run check               # TypeScript 类型检查
 npm run build               # esbuild 打包（dist/launcher.cjs + electron-main + preload）
 npm run dist                # electron-builder 打包单文件：release\dsh-launcher.exe
+npm run dist:installer      # electron-builder NSIS 安装版：release\dsh-launcher-setup-<版本>.exe（可固定任务栏）
+npm run dist:all            # 同时产出上面两个
 ```
 
 开发模式直接跑桌面窗口：
@@ -156,6 +166,7 @@ scripts/
 |---|---|
 | TS/JS 与 dsh 同栈 | 界面直接消费 dsw 设计系统；逻辑可复用/可插件化；单一语言维护 |
 | Electron portable 单文件 | 满足"单一文件 + 启动零依赖 + 桌面窗口"；内置 Chromium + Node |
+| NSIS 安装版互补 | 便携版无法固定任务栏（临时解压目录退出即删），安装版用于固定与开始菜单 |
 | UI 走本地 http 服务 | 主进程 `node:http` 服务 + BrowserWindow 加载；浏览器/桌面窗口形态共用一套前端 |
 | frameless 自绘标题栏 | 与 dsh 风格统一，自绘拖动区/关闭/最小化 |
 | `PORTABLE_EXECUTABLE_DIR` | electron-builder portable 提供 exe 所在目录，配置跟随 exe（便携） |

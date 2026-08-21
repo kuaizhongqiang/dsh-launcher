@@ -21,6 +21,7 @@ A single-file Windows launcher for **dsh** ([`@deepseek-ai/dsh`](https://www.npm
 
 - 🪟 **Desktop window** — double-click opens a frameless window (custom title bar), **no browser required**
 - 📦 **Single file, zero dependencies** — Electron portable exe (~65 MB), Chromium + Node built in
+- 📥 **Two build flavors** — portable exe (copy anywhere) **and** NSIS installer (taskbar-pinnable, Start Menu shortcut)
 - 🎨 **dsh web visuals** — dsw design system: aurora background, frosted-glass card, pulsing status dots, button glow, indeterminate progress bar
 - ⚡ **One-click start** — installs dsh if missing (directory picker), then starts the server and opens your browser
 - 🕊️ **Detached server** — dsh runs as an independent process; closing the launcher window does **not** stop it. Starting again when dsh is already up just re-opens the browser
@@ -40,7 +41,12 @@ A single-file Windows launcher for **dsh** ([`@deepseek-ai/dsh`](https://www.npm
 
 ## Download
 
-Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/kuaizhongqiang/dsh-launcher/releases). Each release is built by GitHub Actions on `windows-latest` and attached to the release.
+Grab the latest build from the [Releases page](https://github.com/kuaizhongqiang/dsh-launcher/releases). Each release is built by GitHub Actions on `windows-latest` and attaches **two** artifacts:
+
+| Artifact | When to use |
+|---|---|
+| `dsh-launcher.exe` (portable) | Copy anywhere, run without installing — **cannot be pinned to the taskbar** (Windows limitation: the portable app unpacks to a temp dir that is deleted on exit, so a pinned shortcut breaks) |
+| `dsh-launcher-setup-<ver>.exe` (NSIS installer) | Install to a stable path, get a Start Menu shortcut, **taskbar pinning works** — use this if you want to pin the launcher |
 
 ## Usage
 
@@ -56,6 +62,8 @@ Grab the latest `dsh-launcher.exe` from the [Releases page](https://github.com/k
 6. **检查更新** compares dsh and the launcher against the latest versions.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
+>
+> **Taskbar pinning**: the portable exe runs from a temp directory that is removed on exit, so a pinned taskbar icon loses its target ("shortcut missing"). To pin, install the NSIS build (`dsh-launcher-setup-<ver>.exe`) and pin the installed launcher instead.
 
 ### CLI
 
@@ -97,6 +105,8 @@ npm ci                      # dev deps (esbuild / electron / electron-builder)
 npm run check               # tsc --noEmit
 npm run build               # esbuild bundles → dist/
 npm run dist                # electron-builder portable → release\dsh-launcher.exe
+npm run dist:installer      # electron-builder NSIS → release\dsh-launcher-setup-<ver>.exe (pinnable)
+npm run dist:all            # both of the above
 ```
 
 Dev modes:
@@ -137,6 +147,7 @@ scripts/
 |---|---|
 | TS/JS, same stack as dsh | UI consumes the dsw design system directly; logic reusable/pluggable; one language to maintain |
 | Electron portable single file | Meets "single file + zero-dependency startup + desktop window"; Chromium + Node built in |
+| NSIS installer companion | Portable exe can't be taskbar-pinned (temp unpack dir is deleted on exit), so an installer build ships for pinning/Start Menu |
 | UI served via local http | Main process runs `node:http`; BrowserWindow loads it — browser and desktop forms share one frontend |
 | Frameless custom title bar | Matches dsh style; custom drag/close/minimize |
 | `PORTABLE_EXECUTABLE_DIR` | electron-builder portable exposes the exe dir → config follows the exe (portable) |

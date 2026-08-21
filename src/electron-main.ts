@@ -3,7 +3,7 @@
 // 带 CLI 参数 → 与命令行版一致（install/start/stop/move/status/check-update）。
 
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { dispatch } from './cli.js';
 import * as log from './log.js';
@@ -19,9 +19,13 @@ const KNOWN_COMMANDS = new Set([
   '--help', '-h', 'help', '--version', '-v',
 ]);
 
-/** 清洗 argv：去掉 exe 路径与可能的 app 路径（dev 模式 `electron .`）。 */
+/** 清洗 argv：去掉 exe 路径、可能的 app 路径（dev 模式 `electron .`）与 Chromium 开关。 */
 function cleanArgs(raw: string[]): string[] {
-  const args = raw.slice(1);
+  const args = raw.slice(1).filter((a) => {
+    // Chromium/Electron 开关（--remote-debugging-port 等）会出现在 process.argv 里，
+    // 但不是启动器命令，忽略之（保留 --help/-h/--version/-v 等已知命令）。
+    return !(a.startsWith('-') && !KNOWN_COMMANDS.has(a));
+  });
   if (args.length > 0 && !args[0].startsWith('-') && !KNOWN_COMMANDS.has(args[0])) {
     args.shift(); // dev: `electron . args...` 的 app 路径
   }
@@ -50,6 +54,15 @@ async function runDesktop(): Promise<void> {
     return;
   }
   log.info(`dsh-launcher 桌面窗口已启动：${server.url}`);
+
+  // 便携版提示：electron-builder portable 会把 app 解压到临时目录运行、退出即删，
+  // 此时从任务栏固定得到的快捷方式指向临时路径，关闭后会失效（“快捷方式丢失”）。
+  // 需要固定到任务栏请使用安装版（NSIS）。
+  const exeDir = dirname(process.execPath);
+  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+  if (portableDir && portableDir.toLowerCase() !== exeDir.toLowerCase()) {
+    log.warn('便携版运行在临时解压目录，任务栏固定会在退出后失效；如需固定请使用安装版（NSIS）。');
+  }
 
   const win = new BrowserWindow({
     width: 720,

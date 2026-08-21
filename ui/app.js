@@ -106,7 +106,14 @@ function setValue(key, text, cls = '') {
 }
 
 async function refreshStatus() {
-  const s = await bridge.getStatus();
+  // 状态刷新永不应把界面卡死：失败只记日志，返回 false 供调用方重试。
+  let s;
+  try {
+    s = await bridge.getStatus();
+  } catch (e) {
+    log('状态检测失败：' + e.message, 'err');
+    return false;
+  }
   // 同步状态，供按钮启用/文案使用（此前只更新显示、未同步 state）
   state.installed = s.dsh.installed;
   state.running = s.port.running;
@@ -153,6 +160,7 @@ async function refreshStatus() {
     setValue('update', '更新  已是最新', 'green');
     setDot('update', 'dot-green');
   }
+  return true;
 }
 
 function renderButtons() {
@@ -315,19 +323,7 @@ function onExit() {
   if (window.launcherVersion) {
     $('ver').textContent = window.launcherVersion;
   }
-  try {
-    const s0 = await bridge.getStatus();
-    if (!window.launcherBridge && !state.installed) {
-      // 预览模式：先不预填，保持模拟效果
-    } else if (s0.installedDir) {
-      $('pathInput').value = s0.installedDir;
-    } else if (s0.defaultDir && !$('pathInput').value.trim()) {
-      $('pathInput').value = s0.defaultDir;
-    }
-  } catch (e) {
-    /* 忽略 */
-  }
-  log('dsh-launcher 已就绪。', '');
+  // 先挂按钮，保证界面立即可用：状态请求失败也不阻塞交互
   $('btnStart').addEventListener('click', onStart);
   $('btnStop').addEventListener('click', onStop);
   $('btnInstall').addEventListener('click', onInstall);
@@ -336,8 +332,24 @@ function onExit() {
   $('btnUpdate').addEventListener('click', onUpdate);
   $('btnExit').addEventListener('click', onExit);
   $('btnClose').addEventListener('click', onExit);
+  log('dsh-launcher 已就绪。', '');
 
-  await refreshStatus();
+  // 预填安装目录（失败忽略）
+  try {
+    const s0 = await bridge.getStatus();
+    if (s0.installedDir) {
+      $('pathInput').value = s0.installedDir;
+    } else if (s0.defaultDir && !$('pathInput').value.trim()) {
+      $('pathInput').value = s0.defaultDir;
+    }
+  } catch (e) {
+    /* 忽略 */
+  }
+  // 初始状态检测：失败自动重试几次（首启冷启动偶尔慢）
+  for (let i = 1; i <= 3; i++) {
+    if (await refreshStatus()) break;
+    if (i < 3) await delay(600 * i);
+  }
   renderButtons();
 })();
 
