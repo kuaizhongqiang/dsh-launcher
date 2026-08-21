@@ -13,9 +13,9 @@
     "check": "tsc --noEmit",
     "start": "node dist/launcher.cjs",
     "start:desktop": "electron .",
-    "dist": "node scripts/build.mjs && electron-builder --win portable",
-    "dist:installer": "node scripts/build.mjs && electron-builder --win nsis",
-    "dist:all": "node scripts/build.mjs && electron-builder --win portable nsis",
+    "dist": "node scripts/build.mjs && electron-builder --win portable --publish never",
+    "dist:installer": "node scripts/build.mjs && electron-builder --win nsis --publish never",
+    "dist:all": "node scripts/build.mjs && electron-builder --win portable nsis --publish never",
     "dist:sea": "node scripts/build.mjs && node scripts/build-sea.mjs"
   },
   "engines": {

@@ -41,10 +41,12 @@ jobs:
         run: node scripts/build.mjs
 
       - name: Package portable exe
-        run: npx electron-builder --win portable
+        # --publish never：发布由下方 action-gh-release 统一处理，
+        # 避免 electron-builder 因 tag 存在而尝试自行发布（无 GH_TOKEN 会失败）
+        run: npx electron-builder --win portable --publish never
 
       - name: Package NSIS installer
-        run: npx electron-builder --win nsis
+        run: npx electron-builder --win nsis --publish never
 
       - name: Smoke test (CLI mode)
         shell: pwsh
