@@ -79,10 +79,13 @@ export async function startDetached(cfg: Config, noBrowser: boolean): Promise<bo
   const childLog = openSync(childLogPath(), 'a');
 
   await new Promise<void>((resolve, reject) => {
-    const cp = spawn('node', [bin, 'web'], {
+    // 以「隐藏控制台」方式启动 dsh：若让 node 无控制台（windowsHide: true），
+    // 它 spawn 的 pwsh 子进程会各自弹出可见控制台窗口。改用 conhost
+    // --headless 包一层，给 node 一个隐藏控制台，pwsh 子进程继承它，
+    // 不再弹窗（不修改 dsh 本体）。
+    const cp = spawn('conhost.exe', ['--headless', 'node', bin, 'web'], {
       detached: true,
       stdio: ['ignore', childLog, childLog],
-      windowsHide: true,
     });
     cp.on('error', (e) => {
       closeSync(childLog);
@@ -150,12 +153,20 @@ export async function findPIDsByPort(port: number): Promise<number[]> {
   return pids;
 }
 
-/** 强制结束进程（taskkill /F）。 */
+/** 强制结束进程（taskkill /F）。taskkill 输出按系统语言编码（中文 GBK），
+ * 直接解析文本会乱码误判；以「进程是否真的消失」为准。 */
 async function killPID(pid: number): Promise<void> {
-  const out = await node.runNoWindow('taskkill', ['/F', '/PID', String(pid)]);
-  if (!/成功|SUCCESS/i.test(out)) {
-    throw new Error(`taskkill 失败：${out.trim()}`);
+  await node.runNoWindow('taskkill', ['/F', '/PID', String(pid)]);
+  // process.kill(pid, 0) 探测：进程消失抛 ESRCH，仍存活则不抛。
+  for (let i = 0; i < 20; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return; // 进程已消失
+    }
+    await new Promise((r) => setTimeout(r, 100));
   }
+  throw new Error(`taskkill 未能结束 PID ${pid}（进程仍在）`);
 }
 
 /** 轮询 url 直到有 HTTP 响应，返回是否就绪。 */

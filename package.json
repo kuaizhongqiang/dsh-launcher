@@ -1,6 +1,6 @@
 {
   "name": "dsh-launcher",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "dsh (@deepseek-ai/dsh) 本机安装 + 启动引导器 —— TS/JS，Electron 桌面窗口单文件版",
   "type": "module",
   "main": "dist/electron-main.cjs",
