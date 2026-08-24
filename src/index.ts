@@ -1,11 +1,18 @@
 // index.ts —— 入口：初始化日志并分发命令。
 
 import { dispatch } from './cli.js';
+import * as launch from './launch.js';
 import * as log from './log.js';
 
 async function main(): Promise<void> {
   log.initLog();
   log.setDebug(process.env.DSH_LAUNCHER_DEBUG !== undefined);
+
+  // 纯 Node / SEA 版没有 Electron 的 before-quit 钩子：
+  // 进程退出时停止绑定的 dsh 子进程（幂等，重复注册无副作用）
+  process.on('exit', () => {
+    launch.stopChildSilently();
+  });
 
   try {
     await dispatch(process.argv.slice(2));

@@ -1,6 +1,6 @@
 {
   "name": "dsh-launcher",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "dsh (@deepseek-ai/dsh) 本机安装 + 启动引导器 —— TS/JS，Electron 桌面窗口单文件版",
   "type": "module",
   "main": "dist/electron-main.cjs",
@@ -48,6 +48,10 @@
       "shortcutName": "dsh-launcher"
     },
     "asar": true,
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ],
     "npmRebuild": false,
     "electronLanguages": [
       "zh-CN",
@@ -62,5 +66,8 @@
     "postject": "^1.0.0-alpha.6",
     "resedit": "^3.0.2",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "koffi": "^3.1.6"
   }
 }

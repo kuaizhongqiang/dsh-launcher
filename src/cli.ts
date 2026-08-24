@@ -21,8 +21,8 @@ const usage = `dsh-launcher — dsh (@deepseek-ai/dsh) 本机安装 / 启动引�
                                      默认安装目录 %LOCALAPPDATA%\\dsh
   dsh-launcher.exe move --dir <目录> 把已安装的 dsh 挪到新路径
                                     （跨盘自动复制+删除，运行中禁止）
-  dsh-launcher.exe start [--no-browser]  确保 dsh 运行并打开浏览器
-  dsh-launcher.exe stop             停止 dsh（按配置端口结束进程）
+  dsh-launcher.exe start [--no-browser]  启动 dsh 并保持本进程常驻（dsh 绑定启动器）
+  dsh-launcher.exe stop             停止 dsh（结束绑定子进程，或按配置端口回退）
   dsh-launcher.exe status           显示安装目录、版本与运行状态
   dsh-launcher.exe check-update     检查升级：dsh（npm registry）与启动器（GitHub Release）
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
@@ -32,7 +32,8 @@ const usage = `dsh-launcher — dsh (@deepseek-ai/dsh) 本机安装 / 启动引�
 说明：
   - 配置 launcher.json 与 exe 同目录，跟随 exe 走（便携）
   - 运行日志写入 %TEMP%\\dsh-launcher.log（GUI 构建无控制台输出，以此为准）
-  - dsh 以独立进程运行，不绑定启动器：关闭本窗口/退出不影响 dsh，用「停止」结束
+  - dsh 绑定启动器运行（v0.4.0 起）：启动器持有隐藏控制台，dsh 及其 pwsh
+    子进程继承它，执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh
   - 国内下载加速：install 自动探测 npm 官方源与 npmmirror 镜像的延迟，
     官方源不可达或明显更慢时自动使用镜像（可 --no-mirror 关闭）；
     也可用环境变量 DSH_LAUNCHER_NPM_REGISTRY / DSH_LAUNCHER_NPM_MIRROR /
@@ -105,8 +106,10 @@ async function runStart(rest: string[]): Promise<void> {
   if (!cfg || !config.isInstalled(cfg)) {
     fail('未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装');
   }
-  await launch.startDetached(cfg, noBrowser);
-  log.info('dsh 已独立运行（启动器退出不影响 dsh）。');
+  await launch.start(cfg, noBrowser);
+  // dsh 绑定启动器：本进程保持常驻，退出时（electron-main 的 exit 钩子）自动停 dsh
+  log.info('dsh 已绑定启动器运行（关闭本程序将同时停止 dsh）。Ctrl+C 可退出。');
+  await new Promise<void>(() => {});
 }
 
 async function runStop(): Promise<void> {

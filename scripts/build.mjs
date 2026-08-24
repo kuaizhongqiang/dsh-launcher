@@ -33,6 +33,8 @@ await build({
   format: 'cjs',
   outfile: join(root, 'dist/launcher.cjs'),
   banner: { js: '#!/usr/bin/env node' },
+  // koffi 是 native FFI：外部依赖（SEA 单文件版无 node_modules，运行时 require 失败即降级）
+  external: ['koffi'],
   minify: false,
 });
 
@@ -42,7 +44,8 @@ await build({
   entryPoints: [join(root, 'src/electron-main.ts')],
   format: 'cjs',
   outfile: join(root, 'dist/electron-main.cjs'),
-  external: ['electron'],
+  // electron 与 koffi（native FFI）都是运行时外部依赖，不打进 bundle
+  external: ['electron', 'koffi'],
   minify: false,
 });
 
@@ -62,6 +65,7 @@ await build({
   entryPoints: [join(root, 'src/index.ts')],
   format: 'cjs',
   outfile: join(root, 'dist-sea/launcher.cjs'),
+  external: ['koffi'], // SEA 单文件无 node_modules，运行时 require 失败即降级
   minify: true,
 });
 

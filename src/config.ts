@@ -36,10 +36,11 @@ export function configPath(): string {
   return join(dir, 'launcher.json');
 }
 
-/** 读取 launcher.json；文件不存在返回 null。 */
+/** 读取 launcher.json；文件不存在返回 null。容忍 UTF-8 BOM。 */
 export function load(): Config | null {
   try {
-    const data = readFileSync(configPath(), 'utf8');
+    let data = readFileSync(configPath(), 'utf8');
+    if (data.charCodeAt(0) === 0xfeff) data = data.slice(1); // 去 BOM
     const c = JSON.parse(data) as Config;
     if (!c.port || c.port <= 0) c.port = DefaultPort;
     return c;

@@ -196,7 +196,7 @@ async function onStart() {
     const r = await bridge.start();
     if (!r.ok) throw new Error(r.message || '启动失败');
     state.running = true;
-    log(r.already ? 'dsh 已在运行，已打开浏览器。' : 'dsh 已启动并独立运行（关闭本窗口不影响 dsh）。', 'ok');
+    log(r.already ? 'dsh 已在运行，已打开浏览器。' : 'dsh 已启动（关闭启动器将同时停止 dsh）。', 'ok');
   } catch (e) {
     log('启动失败：' + e.message, 'err');
   }
@@ -294,13 +294,13 @@ async function onUpdate() {
 }
 
 function onExit() {
-  log('dsh 仍在后台运行（独立进程）。关闭窗口不影响 dsh。', 'dim');
-  // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit）
+  log('dsh 绑定启动器运行：退出将同时停止 dsh。', 'dim');
+  // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit → 停止 dsh）
   if (window.electronWindow && window.electronWindow.close) {
     window.electronWindow.close();
     return;
   }
-  // 浏览器 / SEA 版：调用后端 /api/exit 结束本服务
+  // 浏览器 / SEA 版：调用后端 /api/exit（内部先停止 dsh 再退出）
   if (bridge.exit) {
     void bridge.exit();
   }

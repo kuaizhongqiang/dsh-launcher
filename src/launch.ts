@@ -1,14 +1,16 @@
 // launch.ts —— dsh 的启动与停止。
 // 移植自 Go internal/launch。
-// 生命周期设计：dsh server 以独立进程运行，不绑定启动器。
-// 启动器负责：确保 dsh 运行 → 打开浏览器 → 退出（dsh 继续服务）。
-// 停止 dsh 通过按端口定位进程并结束。
+// 生命周期设计（v0.4.0 起）：启动器常驻，dsh server 作为启动器的子进程运行，
+// 继承启动器的（隐藏）控制台 —— dsh 内部 spawn 的 pwsh 因此继承隐藏控制台，
+// 不再每次弹一个可见 PowerShell 窗口。
+// 停止 = 直接结束子进程（不再按端口找 PID）；启动器退出时自动停止 dsh。
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { openSync, closeSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import * as consoleWin from './console.js';
 import * as log from './log.js';
 import * as node from './node.js';
 import { openURL } from './win.js';
@@ -17,6 +19,9 @@ import type { Config } from './config.js';
 const readyTimeoutMs = 60_000;
 const pollIntervalMs = 500;
 const httpTimeoutMs = 2000;
+
+/** 当前由本启动器持有的 dsh 子进程（未启动时为 null）。 */
+let child: ChildProcess | null = null;
 
 /** dsh 子进程 stdout/stderr 的落盘路径。 */
 export function childLogPath(): string {
@@ -52,11 +57,11 @@ export async function verifyInstall(cfg: Config): Promise<void> {
 }
 
 /**
- * 确保 dsh 运行（独立进程，不绑定本进程生命周期）：
+ * 启动 dsh（作为本进程子进程，继承隐藏控制台）：
  *   - dsh 已在运行（端口有响应）→ 不重复启动，直接打开浏览器，返回 alreadyRunning=true
- *   - 未运行 → 启动 dsh 子进程（detached），就绪后 detach 并打开浏览器
+ *   - 未运行 → 启动 dsh 子进程，等待就绪（子进程提前退出则立即失败），打开浏览器
  */
-export async function startDetached(cfg: Config, noBrowser: boolean): Promise<boolean> {
+export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   await verifyInstall(cfg);
   const u = url(cfg);
 
@@ -73,38 +78,46 @@ export async function startDetached(cfg: Config, noBrowser: boolean): Promise<bo
     return true;
   }
 
+  // 持有隐藏控制台：让 dsh（及它的 pwsh 子进程）继承，避免弹窗。
+  // 注意：必须在 spawn 之前调用，且 spawn 不能带 windowsHide（否则子进程
+  // 拿不到控制台，pwsh 又会各自弹新窗口）。
+  // 若无法提供隐藏控制台（koffi 不可用等），退回 windowsHide 防 node 自身弹窗。
+  const hasHiddenConsole = consoleWin.ensureHiddenConsole();
+  const windowsHide = !hasHiddenConsole;
+
   const bin = node.dshBinPath(cfg.dshInstallDir);
 
-  // 子进程输出写入日志文件（无控制台时绝不能继承无效句柄）
+  // 子进程输出写入日志文件
   const childLog = openSync(childLogPath(), 'a');
 
   await new Promise<void>((resolve, reject) => {
-    // 以「隐藏控制台」方式启动 dsh：若让 node 无控制台（windowsHide: true），
-    // 它 spawn 的 pwsh 子进程会各自弹出可见控制台窗口。改用 conhost
-    // --headless 包一层，给 node 一个隐藏控制台，pwsh 子进程继承它，
-    // 不再弹窗（不修改 dsh 本体）。
-    const cp = spawn('conhost.exe', ['--headless', 'node', bin, 'web'], {
-      detached: true,
+    // 显式传 --port：dsh web 监听 launcher.json 配置的端口（而非 dsh 自己的默认值）；
+    // 传 --no-open：浏览器由 launcher 统一控制打开，避免 dsh 自开一次 + launcher 再开一次。
+    const args = [bin, 'web', '--port', String(cfg.port), '--no-open'];
+    const cp = spawn('node', args, {
+      // 不 detached：作为本进程子进程，继承（隐藏）控制台。
+      // stdio 指向日志文件（无控制台时绝不能继承无效句柄）。
       stdio: ['ignore', childLog, childLog],
+      windowsHide,
     });
     cp.on('error', (e) => {
       closeSync(childLog);
       reject(new Error(`启动 dsh 失败：${e.message}`));
     });
     cp.on('spawn', () => {
-      log.info(`dsh 子进程已启动（PID ${cp.pid}）：node ${bin} web`);
-      // detached + unref：dsh 独立运行，本进程退出不影响它
-      cp.unref();
+      child = cp;
+      log.info(`dsh 子进程已启动（PID ${cp.pid}）：node ${args.join(' ')}`);
       resolve();
     });
   });
 
-  // 等待就绪
+  // 等待就绪；子进程提前退出 → 立即失败（不用干等超时）
   log.info(`等待 ${u} 就绪（超时 60s）……`);
-  const ready = await waitReady(u, readyTimeoutMs, pollIntervalMs);
+  const ready = await waitReadyOrChildExit(u, readyTimeoutMs, pollIntervalMs);
   closeSync(childLog);
   if (!ready) {
-    throw new Error(`等待 ${u} 超时（60s），子进程日志：${childLogPath()}`);
+    const reason = childExited ? 'dsh 进程提前退出' : '等待超时（60s）';
+    throw new Error(`${reason}，子进程日志：${childLogPath()}`);
   }
   log.info(`${u} 已就绪`);
 
@@ -117,12 +130,32 @@ export async function startDetached(cfg: Config, noBrowser: boolean): Promise<bo
     }
   }
 
-  log.info(`dsh 已启动并独立运行：${u}（关闭本程序不影响 dsh，可用 stop 停止）`);
+  log.info(`dsh 已启动并绑定启动器：${u}（关闭启动器将同时停止 dsh）`);
   return false;
 }
 
-/** 结束配置端口上的 dsh 进程（按端口定位 PID 并强制结束）。 */
+/** 兼容旧名：startDetached → start（语义已变：子进程绑定，非独立进程）。 */
+export const startDetached = start;
+
+/** 子进程是否已提前退出（waitReady 用）。 */
+let childExited = false;
+
+/** 结束当前持有的 dsh 子进程（无则按端口回退）。 */
 export async function stop(cfg: Config): Promise<void> {
+  if (child && !child.killed) {
+    const pid = child.pid;
+    if (pid) {
+      log.info(`结束 dsh 子进程 PID ${pid}……`);
+      try {
+        await killPID(pid);
+      } catch (e) {
+        log.warn(`结束 PID ${pid} 失败：${(e as Error).message}`);
+      }
+    }
+    child = null;
+    return;
+  }
+  // 回退：按端口定位（例如上次启动器异常退出遗留的独立进程）
   const pids = await findPIDsByPort(cfg.port);
   if (pids.length === 0) {
     throw new Error(`端口 ${cfg.port} 上没有监听中的进程，dsh 可能未在运行`);
@@ -134,6 +167,18 @@ export async function stop(cfg: Config): Promise<void> {
     } catch (e) {
       log.warn(`结束 PID ${pid} 失败：${(e as Error).message}`);
     }
+  }
+}
+
+/** 启动器退出时调用：静默结束子进程（不抛错）。退出钩子里不能异步，用同步 taskkill。 */
+export function stopChildSilently(): void {
+  const pid = child?.pid;
+  child = null;
+  if (!pid) return;
+  try {
+    execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
+  } catch {
+    // 进程可能已退出，忽略
   }
 }
 
@@ -153,11 +198,9 @@ export async function findPIDsByPort(port: number): Promise<number[]> {
   return pids;
 }
 
-/** 强制结束进程（taskkill /F）。taskkill 输出按系统语言编码（中文 GBK），
- * 直接解析文本会乱码误判；以「进程是否真的消失」为准。 */
+/** 强制结束进程（taskkill /F /T 连带进程树）。以「进程是否真的消失」为准，不解析本地化输出。 */
 async function killPID(pid: number): Promise<void> {
-  await node.runNoWindow('taskkill', ['/F', '/PID', String(pid)]);
-  // process.kill(pid, 0) 探测：进程消失抛 ESRCH，仍存活则不抛。
+  await node.runNoWindow('taskkill', ['/F', '/T', '/PID', String(pid)]);
   for (let i = 0; i < 20; i++) {
     try {
       process.kill(pid, 0);
@@ -169,26 +212,48 @@ async function killPID(pid: number): Promise<void> {
   throw new Error(`taskkill 未能结束 PID ${pid}（进程仍在）`);
 }
 
-/** 轮询 url 直到有 HTTP 响应，返回是否就绪。 */
-export async function waitReady(url: string, timeoutMs: number, pollMs: number): Promise<boolean> {
+/** 轮询 url 直到有 HTTP 响应；持有子进程时若其提前退出则立即返回 false。 */
+async function waitReadyOrChildExit(url: string, timeoutMs: number, pollMs: number): Promise<boolean> {
+  childExited = false;
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), httpTimeoutMs);
-      try {
-        const resp = await fetch(url, { signal: ctrl.signal });
-        resp.body?.cancel().catch(() => {});
-        if (resp.status >= 200) return true;
-      } finally {
-        clearTimeout(timer);
-      }
-    } catch {
-      // 未就绪，继续轮询
-    }
-    await new Promise((r) => setTimeout(r, pollMs));
+  let exitUnsub: (() => void) | null = null;
+  if (child) {
+    exitUnsub = onChildExit(() => {
+      childExited = true;
+      log.warn(`dsh 子进程提前退出（exit code ${child?.exitCode ?? '?'}），见 ${childLogPath()}`);
+    });
   }
-  return false;
+  try {
+    while (Date.now() < deadline) {
+      if (childExited) return false;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), httpTimeoutMs);
+        try {
+          const resp = await fetch(url, { signal: ctrl.signal });
+          resp.body?.cancel().catch(() => {});
+          if (resp.status >= 200) return true;
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        // 未就绪，继续轮询
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+    return false;
+  } finally {
+    exitUnsub?.();
+  }
+}
+
+/** 订阅子进程退出（返回取消函数）。 */
+function onChildExit(fn: () => void): () => void {
+  if (!child) return () => {};
+  child.once('exit', fn);
+  return () => {
+    child?.removeListener('exit', fn);
+  };
 }
 
 /** 报告配置端口当前是否有服务响应。 */

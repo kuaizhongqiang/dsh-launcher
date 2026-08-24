@@ -24,8 +24,8 @@ A single-file Windows launcher for **dsh** ([`@deepseek-ai/dsh`](https://www.npm
 - 📥 **Two build flavors** — portable exe (copy anywhere) **and** NSIS installer (taskbar-pinnable, Start Menu shortcut)
 - 🎨 **dsh web visuals** — dsw design system: aurora background, frosted-glass card, pulsing status dots, button glow, indeterminate progress bar
 - ⚡ **One-click start** — installs dsh if missing (directory picker), then starts the server and opens your browser
-- 🕊️ **Detached server** — dsh runs as an independent process; closing the launcher window does **not** stop it. Starting again when dsh is already up just re-opens the browser
-- 🛑 **Stop** — stops dsh by resolving the process on the configured port (GUI **停止** button / `stop` command)
+- 🔗 **Bound server** — dsh runs as a child of the launcher, inheriting its hidden console: executing tools no longer pops up PowerShell/cmd windows; closing the launcher stops dsh
+- 🛑 **Stop** — ends the bound child process directly (GUI **停止** button / `stop` command; legacy detached processes are still resolved by port as a fallback)
 - 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive copy+delete); refused while dsh is running
 - 🔍 **Environment status** — Node.js / npm / dsh versions, install state, port health
 - 🔔 **Upgrade check** — compares dsh (`@deepseek-ai/dsh` on npm registry) and the launcher itself (GitHub Release) against what's installed
@@ -58,7 +58,7 @@ Grab the latest build from the [Releases page](https://github.com/kuaizhongqiang
    - dsh installed → starts the service (or re-opens the browser if already running); the button turns into "已运行"
    - Not installed → pick a directory with **浏览…** (or type one), then **启动** installs and starts automatically
 4. **移动** relocates the installed dsh package (refused while running).
-5. **停止** stops dsh; **×** closes only the window — dsh keeps running in the background.
+5. **停止** stops dsh; **×** closes the window and **stops dsh with it** (dsh is bound to the launcher).
 6. **检查更新** compares dsh and the launcher against the latest versions.
 
 > Set `DSH_LAUNCHER_NO_BROWSER=1` to skip auto-opening the browser.
@@ -70,13 +70,17 @@ Grab the latest build from the [Releases page](https://github.com/kuaizhongqiang
 ```powershell
 dsh-launcher.exe install [--dir <dir>]   # install @deepseek-ai/dsh (default %LOCALAPPDATA%\dsh)
 dsh-launcher.exe move --dir <dir>        # relocate dsh (refused while running)
-dsh-launcher.exe start [--no-browser]    # ensure dsh is running and open the browser (idempotent)
-dsh-launcher.exe stop                    # stop dsh (kill the process listening on the port)
+dsh-launcher.exe start [--no-browser]    # start dsh and stay resident (dsh bound to the launcher; exit stops it)
+dsh-launcher.exe stop                    # stop dsh (end the bound child, or fall back to the port)
 dsh-launcher.exe status                  # install dir / version / running state
 dsh-launcher.exe check-update            # check dsh (npm) and launcher (GitHub Release)
 dsh-launcher.exe --version
 dsh-launcher.exe --help
 ```
+
+> **Bound server (since v0.4.0)**: `start` launches dsh and stays in the foreground. The launcher owns a hidden
+> console that dsh and its pwsh children inherit — tool execution no longer pops up PowerShell/cmd windows,
+> and closing the launcher stops dsh.
 
 Logs go to `%TEMP%\dsh-launcher.log` (the windowed build has no console).
 
@@ -125,7 +129,8 @@ src/                          TS logic (shared by CLI and Electron)
 ├── config.ts                 launcher.json read/write (portable: follows the exe)
 ├── node.ts                   node/npm detection, registry mirror strategy, install
 ├── install.ts                install / move flows
-├── launch.ts                 start/stop (detached process, port-based kill)
+├── console.ts                hidden console (koffi AllocConsole + SW_HIDE, inherited by the dsh child)
+├── launch.ts                 start/stop (dsh as a bound child process, direct child kill)
 ├── update.ts                 upgrade checks (npm registry + GitHub Release)
 ├── server.ts                 local node:http service (UI assets + REST bridge + SSE logs)
 ├── cli.ts                    CLI entry
@@ -151,7 +156,7 @@ scripts/
 | UI served via local http | Main process runs `node:http`; BrowserWindow loads it — browser and desktop forms share one frontend |
 | Frameless custom title bar | Matches dsh style; custom drag/close/minimize |
 | `PORTABLE_EXECUTABLE_DIR` | electron-builder portable exposes the exe dir → config follows the exe (portable) |
-| dsh as detached process | Launcher exit doesn't stop dsh; port-based stop |
+| dsh bound to the launcher | Launcher owns a hidden console; dsh and its pwsh children inherit it — no more popup windows when executing tools; closing the launcher stops dsh (clear lifecycle) |
 | Streamed npm output | Every line pushed to the window via log subscription (SSE) |
 | SEA fallback kept | Size-sensitive deployments can degrade to an embedded-Node single file (browser UI) |
 

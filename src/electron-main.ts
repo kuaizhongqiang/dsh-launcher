@@ -6,6 +6,8 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { dirname, join } from 'node:path';
 
 import { dispatch } from './cli.js';
+import * as consoleWin from './console.js';
+import * as launch from './launch.js';
 import * as log from './log.js';
 import { DefaultUIPort, startServer } from './server.js';
 
@@ -37,6 +39,18 @@ async function runDesktop(): Promise<void> {
   await app.whenReady();
   log.initLog();
   log.setDebug(process.env.DSH_LAUNCHER_DEBUG !== undefined);
+
+  // 持有隐藏控制台：dsh 作为子进程继承后，其 pwsh 子进程不再弹窗。
+  // 必须尽早调用（在 /api/start 真正 spawn 之前）。
+  consoleWin.ensureHiddenConsole();
+
+  // 启动器常驻：关闭窗口/退出时自动停止 dsh 子进程
+  app.on('before-quit', () => {
+    launch.stopChildSilently();
+  });
+  process.on('exit', () => {
+    launch.stopChildSilently();
+  });
 
   // 端口占用则顺延（最多试 10 个）
   let server: Awaited<ReturnType<typeof startServer>> | null = null;
@@ -112,6 +126,11 @@ if (args.length > 0 && args[0] !== 'ui') {
   // CLI 模式：不需要窗口，直接跑命令后退出
   log.initLog();
   log.setDebug(process.env.DSH_LAUNCHER_DEBUG !== undefined);
+  // CLI 同样先持有隐藏控制台（start 时 dsh 子进程继承，不弹窗）
+  consoleWin.ensureHiddenConsole();
+  process.on('exit', () => {
+    launch.stopChildSilently();
+  });
   void (async () => {
     try {
       await dispatch(args);

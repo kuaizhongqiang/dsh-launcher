@@ -21,8 +21,8 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 - 📥 **两种构建** — 便携单文件（随处拷走）**与** NSIS 安装版（可固定到任务栏、带开始菜单快捷方式）
 - 🎨 **dsh web 同款视觉** — dsw 设计系统：背景极光、毛玻璃卡片、脉冲状态点、按钮辉光、不定进度条
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
-- 🕊️ **独立运行** — dsh 以独立进程运行，关闭启动器窗口**不会**停止 dsh；再次点启动（已在运行）只是重新打开浏览器
-- 🛑 **停止 dsh** — 按配置端口定位进程并结束（窗口「停止」按钮 / `stop` 命令）
+- 🔗 **绑定运行** — dsh 作为启动器子进程运行（继承启动器的隐藏控制台）：执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh
+- 🛑 **停止 dsh** — 直接结束绑定的子进程（窗口「停止」按钮 / `stop` 命令；旧版遗留的独立进程按端口回退结束）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
 - 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（npm registry 的 `@deepseek-ai/dsh`）与启动器自身（GitHub Release 最新版）
@@ -55,7 +55,7 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
    - 已安装 dsh → 启动服务（已在运行则直接打开浏览器），按钮变为"已运行"
    - 未安装 → 先点**浏览…**选择安装目录（或直接输入），再点**启动**即可自动安装并启动
 4. 需要挪动 dsh 时，点**移动**并选择目标目录（dsh 运行中会拒绝）。
-5. 点**停止**结束 dsh；点 **×** 只关闭窗口——dsh 继续在后台运行。
+5. 点**停止**结束 dsh；点 **×** 关闭窗口时**会同时停止 dsh**（dsh 绑定启动器运行）。
 6. 点**检查更新**可立即比对 dsh 与启动器的最新版本。
 
 > 设 `DSH_LAUNCHER_NO_BROWSER=1` 可跳过自动打开浏览器。
@@ -67,15 +67,16 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 ```powershell
 dsh-launcher.exe install [--dir <目录>]   # 安装 @deepseek-ai/dsh（默认 %LOCALAPPDATA%\dsh）
 dsh-launcher.exe move --dir <目录>        # 把已安装的 dsh 挪到新路径（运行中拒绝）
-dsh-launcher.exe start [--no-browser]     # 确保 dsh 运行并打开浏览器（幂等）
-dsh-launcher.exe stop                     # 停止 dsh（结束监听端口的进程）
+dsh-launcher.exe start [--no-browser]     # 启动 dsh 并保持本进程常驻（dsh 绑定启动器，退出即停）
+dsh-launcher.exe stop                     # 停止 dsh（结束绑定子进程，或按端口回退）
 dsh-launcher.exe status                   # 显示安装目录 / 版本 / 运行状态
 dsh-launcher.exe check-update             # 检查升级：dsh（npm）与启动器（GitHub Release）
 dsh-launcher.exe --version                # 显示版本
 dsh-launcher.exe --help
 ```
 
-> dsh **独立运行**：`start` 在 dsh 就绪后即返回，启动器退出不影响 dsh；用 `stop` 停止。
+> dsh **绑定启动器**（v0.4.0 起）：`start` 启动 dsh 后保持前台运行，启动器持有隐藏控制台，
+> dsh 及其 pwsh 子进程继承它——执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh。
 
 日志写入 `%TEMP%\dsh-launcher.log`（窗口版无控制台，以此为准）。
 
@@ -144,7 +145,8 @@ src/                          TS 逻辑（与语言无关，Node/Electron 通用
 ├── config.ts                 launcher.json 读写（便携：跟随 exe）
 ├── node.ts                   node/npm 探测、registry 镜像策略、安装
 ├── install.ts                install / move 流程
-├── launch.ts                 start/stop（独立进程、端口定位）
+├── console.ts                隐藏控制台（koffi AllocConsole + SW_HIDE，供 dsh 子进程继承）
+├── launch.ts                 start/stop（dsh 作为子进程绑定启动器、直接结束子进程）
 ├── update.ts                 升级检测（npm registry + GitHub Release）
 ├── server.ts                 node:http 本地服务（UI 静态资源 + REST bridge + SSE 日志）
 ├── cli.ts                    命令行入口
@@ -170,7 +172,7 @@ scripts/
 | UI 走本地 http 服务 | 主进程 `node:http` 服务 + BrowserWindow 加载；浏览器/桌面窗口形态共用一套前端 |
 | frameless 自绘标题栏 | 与 dsh 风格统一，自绘拖动区/关闭/最小化 |
 | `PORTABLE_EXECUTABLE_DIR` | electron-builder portable 提供 exe 所在目录，配置跟随 exe（便携） |
-| dsh 独立进程 | 启动器退出后 dsh 继续运行；按端口定位停止 |
+| dsh 绑定启动器 | 启动器持有隐藏控制台，dsh 及其 pwsh 子进程继承——执行工具不弹窗；关闭启动器即停 dsh，生命周期清晰 |
 | npm 安装流式输出 | 每行经日志订阅推送到窗口（SSE），实时可见 |
 | SEA 备选保留 | 体积敏感场景可退化为内嵌 Node 的单文件（界面走浏览器） |
 

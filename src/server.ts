@@ -256,9 +256,11 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
         return;
       }
       try {
-        const already = await launch.startDetached(cfg, false);
+        const already = await launch.start(cfg, false);
         json(res, 200, { ok: true, already });
       } catch (e) {
+        // 启动失败（含就绪超时）必须落日志，便于排查
+        log.error(`启动失败：${errMessage(e)}`);
         json(res, 500, { ok: false, message: errMessage(e) });
       }
       return;
@@ -273,6 +275,7 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
         await launch.stop(cfg);
         json(res, 200, { ok: true });
       } catch (e) {
+        log.error(`停止失败：${errMessage(e)}`);
         json(res, 500, { ok: false, message: errMessage(e) });
       }
       return;
@@ -345,6 +348,8 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
     }
     case '/api/exit': {
       json(res, 200, { ok: true });
+      // 退出前停止绑定的 dsh 子进程（启动器常驻 = dsh 随启动器停）
+      launch.stopChildSilently();
       setTimeout(() => process.exit(0), 50);
       return;
     }
