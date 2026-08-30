@@ -6,7 +6,7 @@
 // 停止 = 直接结束子进程（不再按端口找 PID）；启动器退出时自动停止 dsh。
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, existsSync, statSync, readFileSync } from 'node:fs';
+import { openSync, closeSync, existsSync, statSync, readFileSync, readSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,6 +24,9 @@ const httpTimeoutMs = 2000;
 /** 当前由本启动器持有的 dsh 子进程（未启动时为 null）。 */
 let child: ChildProcess | null = null;
 
+/** 本次 spawn 前的日志文件偏移：之后只读增量，旧进程打印的 token 不再干扰。 */
+let childLogOffset = 0;
+
 /** dsh 子进程 stdout/stderr 的落盘路径。 */
 export function childLogPath(): string {
   return join(tmpdir(), 'dsh-launcher-child.log');
@@ -37,11 +40,24 @@ export function url(cfg: Config): string {
 /**
  * dsh v0.1.2+ 启动时会打印一次带进程 token 的访问 URL（`dsh web: http://.../?token=...`）。
  * 浏览器必须通过该 URL 才能换取登录 cookie（直接访问无 token 的 / 会 401）。
- * 从子进程日志中取**最新**一条带 token 的 URL；找不到（旧版 dsh）返回 undefined。
+ * 只读取本次 spawn 之后追加的日志段——日志文件跨进程追加，旧进程的 token
+ * 会永远占据"最后一条"，若不按偏移过滤，新 token 出现前会一直读到旧值。
+ * 找不到（旧版 dsh / 尚未打印）返回 undefined。
  */
 export function tokenUrlFromLog(): string | undefined {
   try {
-    return tokenUrlFromLogText(readFileSync(childLogPath(), 'utf8'));
+    const path = childLogPath();
+    const size = statSync(path).size;
+    if (size < childLogOffset) childLogOffset = 0; // 日志被轮转/重建
+    if (size <= childLogOffset) return undefined;
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(size - childLogOffset);
+      const bytesRead = readSync(fd, buf, 0, buf.length, childLogOffset);
+      return tokenUrlFromLogText(buf.subarray(0, bytesRead).toString('utf8'));
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return undefined;
   }
@@ -124,13 +140,14 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
   }
   let target = tokenUrl ?? u;
   // 自检：带 token 的 URL 若返回 401，说明 token 已与端口上的进程不匹配
-  // （进程重启轮换了 token / 端口被其他实例占用），重新抓一次日志再试。
+  // （进程重启轮换了 token / 端口被其他实例占用），重新抓一次再试。
   if (tokenUrl !== undefined) {
     const verdict = await verifyTokenUrl(target);
     if (verdict === 'invalid') {
       log.warn(`token URL 自检返回 401（token 与当前端口实例不匹配，可能已轮换或端口被其他实例占用）`);
       if (pid !== undefined) {
-        const retry = await waitForTokenUrl(3_000);
+        // 本次拉起的实例：等日志出现新 token（日志偏移已隔离旧进程的 token）。
+        const retry = await waitForTokenUrl(5_000);
         if (retry !== undefined && retry !== target) {
           const token = tokenFromUrl(retry);
           if (token !== undefined) {
@@ -144,6 +161,17 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
           } else {
             log.error(`重试后 token URL 仍无效（${target}）。dsh 进程可能反复重启或端口被其他 dsh 实例占用；请停止占用 3080 的进程后重新启动 dsh。`);
           }
+        } else {
+          log.error(`重试后仍未在子进程日志看到新 token URL（当前 ${target} 无效）。请停止占用 3080 的进程后重新启动 dsh。`);
+        }
+      } else {
+        // 已运行实例：共享文件可能陈旧，重新读一次（可能被 vscode 插件更新过）。
+        const shared = readLaunchToken();
+        if (shared !== undefined && shared.url !== target) {
+          tokenUrl = shared.url;
+          tokenSource = '共享 token 文件（重读）';
+          target = shared.url;
+          log.info(`共享 token 文件已更新，改用新地址：${target}`);
         }
       }
     } else if (verdict === 'unreachable') {
@@ -212,7 +240,13 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
 
   const bin = node.dshBinPath(cfg.dshInstallDir, cfg.source);
 
-  // 子进程输出写入日志文件
+  // 子进程输出写入日志文件；先记录当前偏移，之后只读本次进程的增量输出
+  // （旧进程留在日志里的 token 不会干扰新进程的 token 提取）。
+  try {
+    childLogOffset = statSync(childLogPath()).size;
+  } catch {
+    childLogOffset = 0;
+  }
   const childLog = openSync(childLogPath(), 'a');
 
   await new Promise<void>((resolve, reject) => {
