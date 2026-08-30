@@ -4,6 +4,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { compareSemver, parseSemver, type Semver } from './semver.js';
 /** npm 包名。 */
 export const DshPackage = '@deepseek-ai/dsh';
 
@@ -88,6 +89,156 @@ export async function chooseRegistry(
     return { registry: mirror, viaMirror: true, probe: `主源 ${pr.latency}ms 明显慢于镜像 ${mr.latency}ms` };
   }
   return { registry: primary, viaMirror: false, probe: `主源 ${pr.latency}ms 可用（镜像 ${mr.latency}ms）` };
+}
+
+// ---------- GitHub 源（dsh 源码构建，v0.5.0 起） ----------
+
+/** dsh 官方仓库（GitHub 源码源）。 */
+export const GithubDshRepo = 'https://github.com/deepseek-ai/deepseek-harness.git';
+
+/** 安装源类型：github = 源码构建；npm = registry 安装（旧方式，保留作后备）。 */
+export type DshSource = 'github' | 'npm';
+
+/**
+ * 解析代理字符串，优先级：CLI 显式 > 环境变量 > launcher.json 配置。
+ * 环境变量依次读 DSH_LAUNCHER_PROXY / HTTPS_PROXY / HTTP_PROXY / ALL_PROXY。
+ * 返回 undefined 表示直连。git 走 socks5h:// 也支持（git 内置）。
+ */
+export function resolveProxy(cli?: string, configProxy?: string): string | undefined {
+  if (cli) return cli;
+  const env =
+    process.env.DSH_LAUNCHER_PROXY ??
+    process.env.HTTPS_PROXY ??
+    process.env.https_proxy ??
+    process.env.HTTP_PROXY ??
+    process.env.http_proxy ??
+    process.env.ALL_PROXY ??
+    process.env.all_proxy;
+  if (env) return env;
+  if (configProxy) return configProxy;
+  return undefined;
+}
+
+/** git 代理参数（无代理时为空数组）。 */
+export function gitProxyArgs(proxy: string | undefined): string[] {
+  if (!proxy) return [];
+  return ['-c', `http.proxy=${proxy}`, '-c', `https.proxy=${proxy}`];
+}
+
+/** 运行 git（.exe，无需 shell），流式输出可选，退出码非 0 抛错。 */
+function runGit(args: string[], onLine?: LineCallback): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cp = spawn('git', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    const push = (chunk: Buffer) => {
+      const s = chunk.toString('utf8');
+      output += s;
+      if (onLine) {
+        for (const line of s.split(/\r?\n/)) {
+          if (line.trim()) onLine(line);
+        }
+      }
+    };
+    cp.stdout?.on('data', push);
+    cp.stderr?.on('data', push);
+    cp.on('error', reject);
+    cp.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`git ${args.join(' ')} 退出码 ${code}`));
+        return;
+      }
+      resolve(output);
+    });
+  });
+}
+
+/** 列出 dsh 仓库的 dsh-v* tags（ls-remote，无需完整 clone）。 */
+export async function listDshTags(proxy?: string): Promise<string[]> {
+  const out = await runGit(['ls-remote', '--tags', '--refs', ...gitProxyArgs(proxy), GithubDshRepo]);
+  const tags: string[] = [];
+  for (const line of out.split(/\r?\n/)) {
+    const m = /refs\/tags\/(.+)$/.exec(line.trim());
+    if (m && m[1].startsWith('dsh-')) tags.push(m[1]);
+  }
+  return tags;
+}
+
+/** 取最新的 dsh tag（按 semver 比较，dsh-v 前缀自动处理）。 */
+export async function latestDshTag(proxy?: string): Promise<string> {
+  const tags = await listDshTags(proxy);
+  let best: string | null = null;
+  let bestSemver: Semver | null = null;
+  for (const t of tags) {
+    const s = parseSemver(t);
+    if (!s) continue;
+    if (bestSemver === null || compareSemver(s, bestSemver) > 0) {
+      best = t;
+      bestSemver = s;
+    }
+  }
+  if (!best) throw new Error('未找到任何 dsh 版本 tag（GitHub 仓库不可达？可加 --proxy 指定代理）');
+  return best;
+}
+
+/** 浅克隆 dsh 仓库到 <dir>/deepseek-harness（单 tag）。目标已存在则先删除。 */
+export async function cloneDsh(
+  dir: string,
+  tag: string,
+  proxy: string | undefined,
+  onLine?: LineCallback,
+): Promise<string> {
+  const target = join(dir, 'deepseek-harness');
+  await import('node:fs/promises').then(({ rm }) => rm(target, { recursive: true, force: true }));
+  const args = [
+    'clone', '--depth', '1', '--branch', tag, '--single-branch',
+    ...gitProxyArgs(proxy), GithubDshRepo, target,
+  ];
+  await runGit(args, onLine);
+  return target;
+}
+
+/** 运行 pnpm（Windows 上是 pnpm.cmd，需 shell）。退出码非 0 抛错，流式输出。 */
+export function runPnpm(args: string[], cwd: string, onLine?: LineCallback): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cp = spawn('pnpm', args, {
+      cwd,
+      windowsHide: true,
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const push = (chunk: Buffer) => {
+      const s = chunk.toString('utf8');
+      output += s;
+      if (onLine) {
+        for (const line of s.split(/\r?\n/)) {
+          if (line.trim()) onLine(line);
+        }
+      }
+    };
+    cp.stdout?.on('data', push);
+    cp.stderr?.on('data', push);
+    cp.on('error', reject);
+    cp.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`pnpm ${args.join(' ')} 退出码 ${code}`));
+        return;
+      }
+      resolve(output);
+    });
+  });
+}
+
+/** 确保 pnpm 可用；不可用时尝试 `npm install -g pnpm`。返回 'pnpm'。 */
+export async function ensurePnpm(onLine?: LineCallback): Promise<string> {
+  try {
+    await runPnpm(['--version'], process.cwd(), onLine);
+    return 'pnpm';
+  } catch {
+    onLine?.('未检测到 pnpm，正在通过 npm 安装 pnpm……');
+    await runNpm(['install', '-g', 'pnpm']);
+    return 'pnpm';
+  }
 }
 
 // ---------- 版本 ----------
@@ -264,27 +415,31 @@ export async function runNoWindow(name: string, args: string[]): Promise<string>
 
 // ---------- dsh 路径约定 ----------
 
-/** 安装目录中 dsh 的 bin.js 路径。 */
-export function dshBinPath(installDir: string): string {
-  return join(installDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+/** 安装目录中 dsh 的 bin.js 路径（按安装源：github = 源码构建产物；npm = registry 布局）。 */
+export function dshBinPath(installDir: string, source?: DshSource): string {
+  return source === 'github'
+    ? join(installDir, 'deepseek-harness', 'apps', 'cli', 'lib', 'bin.js')
+    : join(installDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 }
 
-/** 安装目录中 dsh 包的目录。 */
-export function dshPackageDir(installDir: string): string {
-  return join(installDir, 'node_modules', '@deepseek-ai', 'dsh');
+/** 安装目录中 dsh 包/仓库的目录（package.json 所在）。 */
+export function dshPackageDir(installDir: string, source?: DshSource): string {
+  return source === 'github'
+    ? join(installDir, 'deepseek-harness')
+    : join(installDir, 'node_modules', '@deepseek-ai', 'dsh');
 }
 
 /** 运行 `node bin.js --version` 获取版本字符串。 */
-export async function dshVersion(installDir: string): Promise<string> {
-  const { stdout } = await run('node', [dshBinPath(installDir), '--version']);
+export async function dshVersion(installDir: string, source?: DshSource): Promise<string> {
+  const { stdout } = await run('node', [dshBinPath(installDir, source), '--version']);
   const v = stdout.trim();
   if (!v) throw new Error('bin.js --version 无输出');
   return v;
 }
 
 /** 直接从 package.json 读取版本（bin.js 不可用时的回退）。 */
-export function dshVersionFromPackage(installDir: string): string {
-  const data = readFileSync(join(dshPackageDir(installDir), 'package.json'), 'utf8');
+export function dshVersionFromPackage(installDir: string, source?: DshSource): string {
+  const data = readFileSync(join(dshPackageDir(installDir, source), 'package.json'), 'utf8');
   const p = JSON.parse(data) as { version?: string };
   if (!p.version) throw new Error('package.json 缺少 version 字段');
   return p.version;

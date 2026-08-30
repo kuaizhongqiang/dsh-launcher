@@ -13,7 +13,11 @@ export interface Config {
   dshVersion?: string;
   port: number;
   installedAt?: string;
-  // 下载源配置（可选，仅 install 使用）
+  /** 安装源：github = 源码构建（默认）；npm = registry 安装（旧布局兼容）。 */
+  source?: 'github' | 'npm';
+  /** GitHub 访问代理（可选，git 走 socks5/http）。 */
+  proxy?: string;
+  // 下载源配置（可选，仅 npm 安装使用）
   registry?: string;
   registryMirror?: string;
   preferMirror?: boolean;

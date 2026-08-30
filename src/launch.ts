@@ -6,7 +6,7 @@
 // 停止 = 直接结束子进程（不再按端口找 PID）；启动器退出时自动停止 dsh。
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, existsSync, statSync } from 'node:fs';
+import { openSync, closeSync, existsSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,22 +33,69 @@ export function url(cfg: Config): string {
   return `http://127.0.0.1:${cfg.port}/`;
 }
 
+/**
+ * dsh v0.1.2+ 启动时会打印一次带进程 token 的访问 URL（`dsh web: http://.../?token=...`）。
+ * 浏览器必须通过该 URL 才能换取登录 cookie（直接访问无 token 的 / 会 401）。
+ * 从子进程日志中取**最新**一条带 token 的 URL；找不到（旧版 dsh）返回 undefined。
+ */
+export function tokenUrlFromLog(): string | undefined {
+  try {
+    const text = readFileSync(childLogPath(), 'utf8');
+    const re = /(https?:\/\/[^\s"'<>]+?\?token=[A-Za-z0-9_-]+)/g;
+    const matches = [...text.matchAll(re)];
+    return matches.length === 0 ? undefined : matches[matches.length - 1][1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 等待子进程日志出现带 token 的 URL：dsh 端口就绪（launcher 的轮询命中）
+ * 与 dsh 打印 URL 之间有几毫秒到几百毫秒的间隔，直接读可能拿不到。
+ * 轮询等待，超时后返回最后一次尝试结果（可能 undefined，回退普通 URL）。
+ */
+async function waitForTokenUrl(timeoutMs: number): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  let last: string | undefined;
+  while (Date.now() < deadline) {
+    last = tokenUrlFromLog();
+    if (last) return last;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return last;
+}
+
+/** 打开浏览器：优先带 token 的 URL（新版自动登录），否则普通 URL（旧版兼容）。 */
+async function openAccessUrl(cfg: Config): Promise<void> {
+  const u = url(cfg);
+  const tokenUrl = await waitForTokenUrl(5_000);
+  const target = tokenUrl ?? u;
+  try {
+    await openURL(target);
+    log.info(tokenUrl
+      ? `已在默认浏览器打开带 token 的访问地址（自动登录）：${target}`
+      : `已在默认浏览器打开 ${u}`);
+  } catch (e) {
+    log.warn(`打开浏览器失败：${(e as Error).message}（可手动访问 ${target}）`);
+  }
+}
+
 /** 校验配置中的安装目录可用（bin.js 存在且可执行）。 */
 export async function verifyInstall(cfg: Config): Promise<void> {
   if (!cfg.dshInstallDir) {
     throw new Error('未检测到已安装的 dsh：请先安装');
   }
-  const bin = node.dshBinPath(cfg.dshInstallDir);
+  const bin = node.dshBinPath(cfg.dshInstallDir, cfg.source);
   if (!existsSync(bin)) {
     throw new Error(`dsh 安装目录损坏：找不到 ${bin}，请重新安装`);
   }
   try {
-    const ver = await node.dshVersion(cfg.dshInstallDir);
+    const ver = await node.dshVersion(cfg.dshInstallDir, cfg.source);
     log.info(`dsh 版本校验通过：${ver}`);
   } catch (e) {
     // 回退：package.json 存在即视为可用（部分版本 bin.js 可能不响应 --version）
     try {
-      const ver = node.dshVersionFromPackage(cfg.dshInstallDir);
+      const ver = node.dshVersionFromPackage(cfg.dshInstallDir, cfg.source);
       log.warn(`bin.js --version 未通过（${(e as Error).message}），按 package.json 版本 ${ver} 继续`);
     } catch (verErr) {
       throw new Error(`dsh 校验失败（${(e as Error).message}），请重新安装`);
@@ -68,12 +115,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   if (await isRunning(cfg)) {
     log.info(`dsh 已在运行：${u}`);
     if (!noBrowser) {
-      try {
-        await openURL(u);
-        log.info(`已在默认浏览器打开 ${u}`);
-      } catch (e) {
-        log.warn(`打开浏览器失败：${(e as Error).message}（可手动访问 ${u}）`);
-      }
+      await openAccessUrl(cfg);
     }
     return true;
   }
@@ -85,7 +127,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   const hasHiddenConsole = consoleWin.ensureHiddenConsole();
   const windowsHide = !hasHiddenConsole;
 
-  const bin = node.dshBinPath(cfg.dshInstallDir);
+  const bin = node.dshBinPath(cfg.dshInstallDir, cfg.source);
 
   // 子进程输出写入日志文件
   const childLog = openSync(childLogPath(), 'a');
@@ -122,12 +164,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   log.info(`${u} 已就绪`);
 
   if (!noBrowser) {
-    try {
-      await openURL(u);
-      log.info(`已在默认浏览器打开 ${u}`);
-    } catch (e) {
-      log.warn(`打开浏览器失败：${(e as Error).message}（可手动访问 ${u}）`);
-    }
+    await openAccessUrl(cfg);
   }
 
   log.info(`dsh 已启动并绑定启动器：${u}（关闭启动器将同时停止 dsh）`);

@@ -1,72 +1,16 @@
 // update.ts —— 升级检测，覆盖两条独立的分发渠道：
-//   - dsh 本体（@deepseek-ai/dsh）走 npm registry，检测 latest dist-tag；
+//   - dsh 本体：GitHub 源码源查仓库最新 tag（source='github'，默认）；
+//     或 npm registry 查 latest dist-tag（source='npm'）。
 //   - dsh-launcher 走 GitHub Release，检测仓库最新 tag。
 // 本模块只做"检测"，不执行升级。移植自 Go internal/update。
 
+import { compareSemver, parseSemver } from './semver.js';
 import * as node from './node.js';
 
 /** 启动器 GitHub Release 最新版页面（升级启动器时打开）。 */
 export const LauncherReleaseURL = 'https://github.com/kuaizhongqiang/dsh-launcher/releases/latest';
 const launcherAPI = 'https://api.github.com/repos/kuaizhongqiang/dsh-launcher/releases/latest';
 const httpTimeoutMs = 10_000;
-
-// ---------- 语义化版本比较（支持 v 前缀与 -prerelease） ----------
-
-interface Semver {
-  major: number;
-  minor: number;
-  patch: number;
-  pre: string[]; // 预发布标识符（空 = 正式版）
-}
-
-/** 解析语义化版本：可选 v/V 前缀、major.minor.patch、可选 -prerelease，忽略 +build。 */
-function parseSemver(s: string): Semver | null {
-  let v = s.trim();
-  if (v.startsWith('v') || v.startsWith('V')) v = v.slice(1);
-  const plus = v.indexOf('+');
-  if (plus >= 0) v = v.slice(0, plus);
-  const dash = v.indexOf('-');
-  const main = dash >= 0 ? v.slice(0, dash) : v;
-  const preStr = dash >= 0 ? v.slice(dash + 1) : '';
-  const parts = main.split('.');
-  if (parts.length !== 3) return null;
-  const nums = parts.map(Number);
-  if (nums.some((n) => !Number.isInteger(n) || n < 0)) return null;
-  const pre = preStr ? preStr.split('.') : [];
-  if (pre.some((id) => id === '')) return null;
-  return { major: nums[0], minor: nums[1], patch: nums[2], pre };
-}
-
-/** 按 semver 规范比较：返回 -1（a<b）、0（a==b）、1（a>b）。正式版 > 预发布版。 */
-function compareSemver(a: Semver, b: Semver): number {
-  if (a.major !== b.major) return sign(a.major - b.major);
-  if (a.minor !== b.minor) return sign(a.minor - b.minor);
-  if (a.patch !== b.patch) return sign(a.patch - b.patch);
-  if (a.pre.length === 0 && b.pre.length === 0) return 0;
-  if (a.pre.length === 0) return 1;
-  if (b.pre.length === 0) return -1;
-  for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
-    const c = comparePreID(a.pre[i], b.pre[i]);
-    if (c !== 0) return c;
-  }
-  return sign(a.pre.length - b.pre.length);
-}
-
-function sign(n: number): number {
-  return n < 0 ? -1 : n > 0 ? 1 : 0;
-}
-
-/** 比较两个预发布标识符：数字按数值、字母按 ASCII；数字 < 字母。 */
-function comparePreID(a: string, b: string): number {
-  const an = Number(a);
-  const bn = Number(b);
-  const aIsNum = Number.isInteger(an) && /^\d+$/.test(a);
-  const bIsNum = Number.isInteger(bn) && /^\d+$/.test(b);
-  if (aIsNum && bIsNum) return sign(an - bn);
-  if (aIsNum) return -1; // 数字 < 字母
-  if (bIsNum) return 1;
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 
 // ---------- 检测 ----------
 
@@ -84,14 +28,24 @@ export async function checkLauncher(current: string): Promise<{ latest: string; 
   return { latest: tag, hasUpdate: compareSemver(lat, cur) > 0 };
 }
 
-/** 检测 npm registry 上 @deepseek-ai/dsh 的 latest 版本是否有新版。 */
+/** 检测 dsh 是否有新版：github 源查仓库最新 tag（默认）；npm 源查 registry latest。 */
 export async function checkDsh(
   current: string,
   spec: node.RegistrySpec,
+  opts: { source?: node.DshSource; proxy?: string } = {},
 ): Promise<{ latest: string; hasUpdate: boolean }> {
   const cur = parseSemver(current);
   if (!cur) throw new Error(`当前版本 "${current}" 无法解析`);
 
+  // GitHub 源码源：git ls-remote 取最新 dsh tag（走 git 代理）
+  if (opts.source === 'github') {
+    const latest = await node.latestDshTag(opts.proxy);
+    const lat = parseSemver(latest);
+    if (!lat) throw new Error(`最新 tag "${latest}" 无法解析`);
+    return { latest, hasUpdate: compareSemver(lat, cur) > 0 };
+  }
+
+  // npm registry 源
   const { primary, mirror } = node.specEffective(spec);
   const registries = [primary];
   if (!spec.preferMirror && !spec.disableAutoSwitch && mirror !== primary) {

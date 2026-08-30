@@ -61,7 +61,10 @@ const bridgeScript = `<script>
     getStatus: function () { return api('/api/status'); },
     start: function () { return api('/api/start', {}); },
     stop: function () { return api('/api/stop', {}); },
-    install: function (dir) { return api('/api/install', { dir: dir }); },
+    install: function (dir, source, version, proxy) {
+      return api('/api/install', { dir: dir, source: source, version: version, proxy: proxy });
+    },
+    getTags: function () { return api('/api/tags'); },
     move: function (dir) { return api('/api/move', { dir: dir }); },
     checkUpdate: function () { return api('/api/check-update', {}); },
     browse: function () { return api('/api/browse', {}).then(function (r) { return r.dir; }); },
@@ -161,7 +164,7 @@ async function statusPayload(): Promise<Record<string, unknown>> {
   let dshVer = cfg?.dshVersion ?? '';
   if (installed && !dshVer && cfg) {
     try {
-      dshVer = node.dshVersionFromPackage(cfg.dshInstallDir);
+      dshVer = node.dshVersionFromPackage(cfg.dshInstallDir, cfg.source);
     } catch {
       /* ignore */
     }
@@ -170,7 +173,7 @@ async function statusPayload(): Promise<Record<string, unknown>> {
   return {
     node: await safeDetect(),
     npm: await safeNpm(),
-    dsh: { installed, version: dshVer ? 'v' + dshVer.replace(/^v/, '') : '' },
+    dsh: { installed, version: dshVer ? 'v' + dshVer.replace(/^dsh-/, '').replace(/^v/, '') : '' },
     port: { number: cfg?.port ?? config.DefaultPort, running },
     update: { ...updateState },
     defaultDir: defaultInstallDir(),
@@ -283,11 +286,25 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
     case '/api/install': {
       const body = await readBody(req);
       const dir = typeof body.dir === 'string' ? body.dir : '';
+      const source = body.source === 'npm' ? 'npm' : 'github';
+      const version = typeof body.version === 'string' ? body.version : '';
+      const proxy = typeof body.proxy === 'string' ? body.proxy : '';
       try {
-        await install.run(dir, install.registrySpecFromConfig(config.load()));
+        await install.run(dir, install.registrySpecFromConfig(config.load()), { source, version, proxy });
         json(res, 200, { ok: true });
       } catch (e) {
         json(res, 500, { ok: false, message: errMessage(e) });
+      }
+      return;
+    }
+    case '/api/tags': {
+      // GitHub 源的可选 dsh 版本列表（供 UI 下拉选择）
+      try {
+        const cfg = config.load();
+        const tags = await node.listDshTags(cfg?.proxy);
+        json(res, 200, { ok: true, tags });
+      } catch (e) {
+        json(res, 200, { ok: false, tags: [], message: errMessage(e) });
       }
       return;
     }
@@ -318,7 +335,7 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
       try {
         const [d, la] = await Promise.all([
           dshCur
-            ? update.checkDsh(dshCur, spec).catch((e) => {
+            ? update.checkDsh(dshCur, spec, { source: cfg?.source, proxy: cfg?.proxy }).catch((e) => {
                 log.warn(`升级检测：dsh ${errMessage(e)}`);
                 return { latest: '', hasUpdate: false };
               })

@@ -11,20 +11,24 @@ import * as update from './update.js';
 import { VERSION } from './version.js';
 import { openURL } from './win.js';
 
-const usage = `dsh-launcher — dsh (@deepseek-ai/dsh) 本机安装 / 启动引导器（TS/JS 版）
+const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版）
 
 用法：
   dsh-launcher.exe                  无参数（双击）→ 启动 Web UI 并打开浏览器：
                                      状态展示 + 路径选择 + 安装 + 一键启动
-  dsh-launcher.exe install [--dir <目录>] [--registry <url>] [--mirror] [--no-mirror]
-                                     命令行安装 @deepseek-ai/dsh
+  dsh-launcher.exe install [--dir <目录>] [--source github|npm]
+                            [--version <tag>] [--proxy <url>]
+                            [--registry <url>] [--mirror] [--no-mirror]
+                                     安装 dsh（默认 source=github：克隆
+                                     deepseek-ai/deepseek-harness + pnpm 构建，
+                                     锁定最新 dsh tag；--version 指定 tag）
                                      默认安装目录 %LOCALAPPDATA%\\dsh
   dsh-launcher.exe move --dir <目录> 把已安装的 dsh 挪到新路径
                                     （跨盘自动复制+删除，运行中禁止）
   dsh-launcher.exe start [--no-browser]  启动 dsh 并保持本进程常驻（dsh 绑定启动器）
   dsh-launcher.exe stop             停止 dsh（结束绑定子进程，或按配置端口回退）
   dsh-launcher.exe status           显示安装目录、版本与运行状态
-  dsh-launcher.exe check-update     检查升级：dsh（npm registry）与启动器（GitHub Release）
+  dsh-launcher.exe check-update     检查升级：dsh（GitHub tag / npm registry）与启动器（GitHub Release）
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
   dsh-launcher.exe --version | -v   显示版本
   dsh-launcher.exe --help | -h      显示本帮助
@@ -34,9 +38,12 @@ const usage = `dsh-launcher — dsh (@deepseek-ai/dsh) 本机安装 / 启动引�
   - 运行日志写入 %TEMP%\\dsh-launcher.log（GUI 构建无控制台输出，以此为准）
   - dsh 绑定启动器运行（v0.4.0 起）：启动器持有隐藏控制台，dsh 及其 pwsh
     子进程继承它，执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh
-  - 国内下载加速：install 自动探测 npm 官方源与 npmmirror 镜像的延迟，
-    官方源不可达或明显更慢时自动使用镜像（可 --no-mirror 关闭）；
-    也可用环境变量 DSH_LAUNCHER_NPM_REGISTRY / DSH_LAUNCHER_NPM_MIRROR /
+  - v0.1.2+ 的 dsh 采用启动令牌认证：start 会自动抓取 dsh 打印的带 token
+    URL 并打开，浏览器自动登录（30 天 cookie）；重启 dsh 后 token 会变化
+  - GitHub 源需要 git + pnpm（缺 pnpm 时自动 npm i -g pnpm）；
+    网络受限时用 --proxy 或环境变量 DSH_LAUNCHER_PROXY / HTTPS_PROXY 指定代理
+  - npm 源（--source npm）保留 registry 自动探测与国内镜像加速：
+    环境变量 DSH_LAUNCHER_NPM_REGISTRY / DSH_LAUNCHER_NPM_MIRROR /
     DSH_LAUNCHER_PREFER_MIRROR=1 / DSH_LAUNCHER_NO_MIRROR=1 控制
 `;
 
@@ -45,16 +52,43 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
+interface InstallArgs {
+  dir: string;
+  spec: node.RegistrySpec;
+  source: node.DshSource;
+  version: string;
+  proxy: string;
+}
+
 /** 解析 install 子命令参数。 */
-function parseInstallArgs(rest: string[]): { dir: string; spec: node.RegistrySpec } {
+function parseInstallArgs(rest: string[]): InstallArgs {
   const spec: node.RegistrySpec = {};
   let dir = '';
+  let source: node.DshSource = 'github';
+  let version = '';
+  let proxy = '';
   for (let i = 0; i < rest.length; i++) {
     switch (rest[i]) {
       case '--dir':
       case '-d':
         if (i + 1 >= rest.length) fail('--dir 缺少参数');
         dir = rest[++i];
+        break;
+      case '--source':
+        if (i + 1 >= rest.length) fail('--source 缺少参数');
+        {
+          const s = rest[++i];
+          if (s !== 'github' && s !== 'npm') fail(`--source 只支持 github 或 npm，收到 "${s}"`);
+          source = s;
+        }
+        break;
+      case '--version':
+        if (i + 1 >= rest.length) fail('--version 缺少参数');
+        version = rest[++i];
+        break;
+      case '--proxy':
+        if (i + 1 >= rest.length) fail('--proxy 缺少参数');
+        proxy = rest[++i];
         break;
       case '--registry':
         if (i + 1 >= rest.length) fail('--registry 缺少参数');
@@ -70,7 +104,7 @@ function parseInstallArgs(rest: string[]): { dir: string; spec: node.RegistrySpe
         fail(`install 未知参数：${rest[i]}`);
     }
   }
-  return { dir, spec };
+  return { dir, spec, source, version, proxy };
 }
 
 /** 解析 move 子命令参数。 */
@@ -89,8 +123,8 @@ function parseMoveArgs(rest: string[]): string {
 }
 
 async function runInstall(rest: string[]): Promise<void> {
-  const { dir, spec } = parseInstallArgs(rest);
-  await install.run(dir, install.registrySpecFromEnv(spec));
+  const { dir, spec, source, version, proxy } = parseInstallArgs(rest);
+  await install.run(dir, install.registrySpecFromEnv(spec), { source, version, proxy });
   log.info('安装完成。现在可以运行 dsh-launcher.exe（或 dsh-launcher.exe start）启动 dsh。');
 }
 
@@ -152,7 +186,7 @@ async function runCheckUpdate(): Promise<void> {
     console.log('dsh：未安装（先运行 dsh-launcher.exe install）');
   } else {
     try {
-      const { latest, hasUpdate } = await update.checkDsh(dshCur, spec);
+      const { latest, hasUpdate } = await update.checkDsh(dshCur, spec, { source: cfg?.source, proxy: cfg?.proxy });
       if (hasUpdate) {
         console.log(`dsh：当前 ${dshCur} → 最新 ${latest}（可升级，运行 install 即升级到最新）`);
       } else {

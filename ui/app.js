@@ -21,11 +21,14 @@ const mock = {
   },
   async start() { await delay(900); return { ok: true }; },
   async stop()  { await delay(700); return { ok: true }; },
-  async install(dir) {
+  async install(dir, source, version, proxy) {
     await delay(300);
     streamInstallLogs();
     await delay(2600);
     return { ok: true };
+  },
+  async getTags() {
+    return { ok: true, tags: ['dsh-v0.1.2-alpha.1', 'dsh-v0.1.1-rc.2', 'dsh-v0.1.1-rc.1', 'dsh-v0.1.0-rc.8'] };
   },
   async move(dir) { await delay(800); return { ok: true }; },
   async checkUpdate() { await delay(1200); return { dshAvail: false, launcherAvail: false }; },
@@ -226,11 +229,12 @@ async function onInstall() {
   if (state.busy) return;
   const dir = $('pathInput').value.trim();
   if (!dir) { log('请先选择安装目录。', 'warn'); return; }
+  const version = $('verSelect').value || '';
   setBusy(true);
-  setProgress(true, '安装中…');
-  log('开始安装到 ' + dir + ' …', 'brand');
+  setProgress(true, version ? '安装中（' + version + '）…' : '安装中（最新版）…');
+  log('开始安装到 ' + dir + (version ? '（版本 ' + version + '）' : '（最新版）') + ' …', 'brand');
   try {
-    const r = await bridge.install(dir);
+    const r = await bridge.install(dir, 'github', version, '');
     if (!r.ok) throw new Error(r.message || '安装失败');
     state.installed = true;
     log('安装完成。可以点击「启动」。', 'ok');
@@ -241,6 +245,31 @@ async function onInstall() {
   setBusy(false);
   await refreshStatus();
   renderButtons();
+}
+
+/** 从 GitHub 拉取可选版本列表填入下拉框。 */
+async function refreshTags() {
+  if (!bridge.getTags) return;
+  const sel = $('verSelect');
+  const prev = sel.value;
+  const keep = [sel.options[0]];
+  try {
+    const r = await bridge.getTags();
+    if (r && Array.isArray(r.tags) && r.tags.length > 0) {
+      for (const t of r.tags) {
+        const o = document.createElement('option');
+        o.value = t;
+        o.textContent = t;
+        keep.push(o);
+      }
+    } else if (r && r.message) {
+      log('版本列表获取失败：' + r.message, 'warn');
+    }
+  } catch (e) {
+    log('版本列表获取失败：' + e.message, 'warn');
+  }
+  sel.replaceChildren(...keep);
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
 }
 
 async function onMove() {
@@ -274,7 +303,7 @@ async function onUpdate() {
   if (state.busy || state.updating) return;
   state.updating = true;
   renderButtons();
-  log('检查更新：dsh（npm registry）与启动器（GitHub Release）…', 'brand');
+  log('检查更新：dsh（GitHub tag / npm registry）与启动器（GitHub Release）…', 'brand');
   try {
     const r = await bridge.checkUpdate();
     if (r.dshAvail || r.launcherAvail) {
@@ -330,6 +359,7 @@ function onExit() {
   $('btnMove').addEventListener('click', onMove);
   $('btnBrowse').addEventListener('click', onBrowse);
   $('btnUpdate').addEventListener('click', onUpdate);
+  $('btnRefreshTags').addEventListener('click', refreshTags);
   $('btnExit').addEventListener('click', onExit);
   $('btnClose').addEventListener('click', onExit);
   log('dsh-launcher 已就绪。', '');
@@ -350,6 +380,8 @@ function onExit() {
     if (await refreshStatus()) break;
     if (i < 3) await delay(600 * i);
   }
+  // 拉取 GitHub 可选版本列表（失败静默，默认「最新」即可用）
+  refreshTags();
   renderButtons();
 })();
 
@@ -359,7 +391,8 @@ function onExit() {
      getStatus(): Promise<{ node, npm, dsh, port, update, defaultDir, installedDir }>,
      start(): Promise<{ok}>,
      stop(): Promise<{ok}>,
-     install(dir): Promise<{ok}>,
+     install(dir, source, version, proxy): Promise<{ok}>,
+     getTags(): Promise<{ok, tags}>,
      move(dir): Promise<{ok}>,
      checkUpdate(): Promise<{dshAvail, launcherAvail, dshLatest, launcherLatest}>,
      browse(): Promise<string|null>,

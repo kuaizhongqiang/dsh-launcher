@@ -4,8 +4,10 @@
 [![License](https://img.shields.io/github/license/kuaizhongqiang/dsh-launcher?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0a7dff?style=flat-square)]()
 
-dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm 版）的 **Windows 单文件安装 + 启动引导器**。双击 `dsh-launcher.exe` 即弹出桌面窗口：查看环境状态、选择安装目录、安装、一键启动。
+dsh 的 **Windows 单文件安装 + 启动引导器**。双击 `dsh-launcher.exe` 即弹出桌面窗口：查看环境状态、选择安装目录与版本、安装、一键启动。
 
+> **安装源（v0.5.0 起默认 GitHub）**：默认从 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 克隆源码并本地构建（锁定最新 `dsh-v*` tag，可指定版本、可走代理），与官方发布/服务器完全同步；`--source npm` 保留原 registry 安装方式作后备。
+>
 > **TS/JS 技术栈，与 dsh web 同源**：界面直接消费 dsh 的 dsw 设计系统（同一套 `--dsw-*` 令牌），Electron 打包为单文件 exe，启动零依赖（内置 Chromium + Node）。
 
 ## 截图
@@ -20,12 +22,13 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 - 📦 **单文件零依赖** — Electron portable 单 exe（约 65MB），内置 Chromium + Node，启动无需任何外部运行时
 - 📥 **两种构建** — 便携单文件（随处拷走）**与** NSIS 安装版（可固定到任务栏、带开始菜单快捷方式）
 - 🎨 **dsh web 同款视觉** — dsw 设计系统：背景极光、毛玻璃卡片、脉冲状态点、按钮辉光、不定进度条
-- ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
+- ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 版本选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
+- 🔑 **token 自动登录** — dsh v0.1.2+ 采用启动令牌认证：`start` 自动抓取 dsh 打印的带 token URL 并打开，浏览器自动换 cookie（30 天有效），无需手动复制 token
 - 🔗 **绑定运行** — dsh 作为启动器子进程运行（继承启动器的隐藏控制台）：执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh
 - 🛑 **停止 dsh** — 直接结束绑定的子进程（窗口「停止」按钮 / `stop` 命令；旧版遗留的独立进程按端口回退结束）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
 - 🔍 **环境状态** — Node.js / npm / dsh 版本、安装状态、端口健康度
-- 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（npm registry 的 `@deepseek-ai/dsh`）与启动器自身（GitHub Release 最新版）
+- 🔔 **升级检测** — 启动时与点「检查更新」都会比对 dsh（GitHub 最新 tag，默认；npm 源查 registry）与启动器自身（GitHub Release 最新版）
 - 📜 **实时日志** — 安装与启动输出实时显示在窗口内（SSE 推送）
 - ⌨️ **命令行备用** — `install` / `move` / `start` / `stop` / `status` / `check-update` / `--version` / `--help` 照常可用
 - 🧩 **插件生态** — 以 git 子模块携带 [dsh-plugins](dsh-plugins/) 插件合集（当前 v0.5.0）
@@ -34,6 +37,8 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 
 - **Windows 10 / 11**（x64）
 - 目标机器需安装 **Node.js**：`^22.19 || >=24`（仅在运行 dsh 时需要；启动器本身自包含）
+- GitHub 源码源需要 **git** 与 **pnpm**（缺 pnpm 时启动器自动 `npm i -g pnpm`；npm 源不需要）
+- GitHub 网络受限时用 `--proxy`（git 走 socks5/http 代理）或环境变量 `DSH_LAUNCHER_PROXY` / `HTTPS_PROXY`
 - 目标机器无需 Go、无需 npm 全局配置、无需环境变量
 
 ## 下载
@@ -65,18 +70,26 @@ dsh（[`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh)，npm
 ### 命令行
 
 ```powershell
-dsh-launcher.exe install [--dir <目录>]   # 安装 @deepseek-ai/dsh（默认 %LOCALAPPDATA%\dsh）
+dsh-launcher.exe install [--dir <目录>] [--source github|npm] [--version <tag>] [--proxy <url>]
+                            # 安装 dsh（默认 GitHub 源码构建 + 最新 tag；--version 指定 tag；
+                            # --source npm 走 registry；--proxy 给 git 走代理）
+                            # 默认安装目录 %LOCALAPPDATA%\dsh
 dsh-launcher.exe move --dir <目录>        # 把已安装的 dsh 挪到新路径（运行中拒绝）
-dsh-launcher.exe start [--no-browser]     # 启动 dsh 并保持本进程常驻（dsh 绑定启动器，退出即停）
+dsh-launcher.exe start [--no-browser]     # 启动 dsh 并保持本进程常驻（自动抓取 token URL 打开）
 dsh-launcher.exe stop                     # 停止 dsh（结束绑定子进程，或按端口回退）
 dsh-launcher.exe status                   # 显示安装目录 / 版本 / 运行状态
-dsh-launcher.exe check-update             # 检查升级：dsh（npm）与启动器（GitHub Release）
+dsh-launcher.exe check-update             # 检查升级：dsh（GitHub tag / npm）与启动器（GitHub Release）
 dsh-launcher.exe --version                # 显示版本
 dsh-launcher.exe --help
 ```
 
 > dsh **绑定启动器**（v0.4.0 起）：`start` 启动 dsh 后保持前台运行，启动器持有隐藏控制台，
 > dsh 及其 pwsh 子进程继承它——执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh。
+>
+> **token 自动登录**（v0.5.0 起）：dsh v0.1.2+ 的浏览器令牌认证要求通过带 `?token=` 的
+> URL 访问。`start` 会从 dsh 输出中自动抓取该 URL 并打开，浏览器自动换 cookie（30 天）。
+> 若 dsh 已由其它进程启动（`start` 检测到端口占用），仍会尝试从日志抓取当前 token URL。
+> dsh 每次重启 token 都会变化，重新 `start` 即可。日志见 `%TEMP%\dsh-launcher-child.log`。
 
 日志写入 `%TEMP%\dsh-launcher.log`（窗口版无控制台，以此为准）。
 
@@ -87,12 +100,17 @@ dsh-launcher.exe --help
 ```json
 {
   "dshInstallDir": "C:\\Users\\<user>\\AppData\\Local\\dsh",
-  "dshVersion": "0.1.0-rc.7",
+  "dshVersion": "dsh-v0.1.2-alpha.1",
   "port": 3080,
-  "installedAt": "2026-08-20T20:08:35+08:00"
+  "installedAt": "2026-08-30T08:00:00+08:00",
+  "source": "github",
+  "proxy": "socks5h://127.0.0.1:10808"
 }
 ```
 
+- `source`：`github`（源码构建，默认）/ `npm`（registry 安装）；`proxy`：GitHub 访问代理（可选）。
+- 目录结构（github 源）：`<安装目录>/deepseek-harness/`（克隆的仓库，构建产物在
+  `apps/cli/lib/bin.js`）。
 - **绝不触碰** `~/.dsh`（`DSH_HOME`）— 现有 profile / 插件 / 会话保持原样。
 - 新机器上运行 `install` 会覆盖配置中的安装路径。
 
@@ -143,11 +161,12 @@ npm run start               # 纯 Node CLI（node dist/launcher.cjs）
 ```
 src/                          TS 逻辑（与语言无关，Node/Electron 通用）
 ├── config.ts                 launcher.json 读写（便携：跟随 exe）
-├── node.ts                   node/npm 探测、registry 镜像策略、安装
-├── install.ts                install / move 流程
+├── node.ts                   node/npm/pnpm/git 探测、GitHub 源（tag 列表/浅克隆/代理）、registry 镜像策略
+├── semver.ts                 语义化版本比较（GitHub tag 排序 / 升级检测共用）
+├── install.ts                install / move 流程（github 源码构建 / npm 双源）
 ├── console.ts                隐藏控制台（koffi AllocConsole + SW_HIDE，供 dsh 子进程继承）
-├── launch.ts                 start/stop（dsh 作为子进程绑定启动器、直接结束子进程）
-├── update.ts                 升级检测（npm registry + GitHub Release）
+├── launch.ts                 start/stop（dsh 作为子进程绑定启动器、抓取 token URL）
+├── update.ts                 升级检测（GitHub tag + npm registry + GitHub Release）
 ├── server.ts                 node:http 本地服务（UI 静态资源 + REST bridge + SSE 日志）
 ├── cli.ts                    命令行入口
 ├── electron-main.ts          Electron 主进程（窗口 + CLI 双模式）
