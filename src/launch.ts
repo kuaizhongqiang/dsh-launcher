@@ -76,6 +76,25 @@ async function waitForTokenUrl(timeoutMs: number): Promise<string | undefined> {
  */
 const TOKEN_WAIT_MS = 10_000;
 
+/** 打开浏览器前自检 token URL：token 有效（303 换 cookie）才打开；避免把 401 甩给浏览器。 */
+async function verifyTokenUrl(target: string): Promise<'ok' | 'no-auth' | 'invalid' | 'unreachable'> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), httpTimeoutMs);
+    try {
+      const resp = await fetch(target, { redirect: 'manual', signal: ctrl.signal });
+      if (resp.status === 303 || resp.status === 302) return 'ok';
+      if (resp.status === 200) return 'no-auth';
+      if (resp.status === 401) return 'invalid';
+      return resp.status < 500 ? 'invalid' : 'unreachable';
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return 'unreachable';
+  }
+}
+
 async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
   const u = url(cfg);
   let tokenUrl: string | undefined;
@@ -103,7 +122,34 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
     tokenUrl = readLaunchToken()?.url;
     tokenSource = tokenUrl !== undefined ? '共享 token 文件' : undefined;
   }
-  const target = tokenUrl ?? u;
+  let target = tokenUrl ?? u;
+  // 自检：带 token 的 URL 若返回 401，说明 token 已与端口上的进程不匹配
+  // （进程重启轮换了 token / 端口被其他实例占用），重新抓一次日志再试。
+  if (tokenUrl !== undefined) {
+    const verdict = await verifyTokenUrl(target);
+    if (verdict === 'invalid') {
+      log.warn(`token URL 自检返回 401（token 与当前端口实例不匹配，可能已轮换或端口被其他实例占用）`);
+      if (pid !== undefined) {
+        const retry = await waitForTokenUrl(3_000);
+        if (retry !== undefined && retry !== target) {
+          const token = tokenFromUrl(retry);
+          if (token !== undefined) {
+            writeLaunchToken({ token, url: retry, port: cfg.port, pid, source: 'dsh-launcher' });
+          }
+          tokenUrl = retry;
+          tokenSource = '子进程日志（重试）';
+          target = retry;
+          if (await verifyTokenUrl(target) === 'ok') {
+            log.info('重试的 token URL 自检通过');
+          } else {
+            log.error(`重试后 token URL 仍无效（${target}）。dsh 进程可能反复重启或端口被其他 dsh 实例占用；请停止占用 3080 的进程后重新启动 dsh。`);
+          }
+        }
+      }
+    } else if (verdict === 'unreachable') {
+      log.warn(`token URL 自检无法连接（${target}），直接打开浏览器（可能服务尚未就绪）`);
+    }
+  }
   try {
     await openURL(target);
     if (tokenUrl !== undefined) {
