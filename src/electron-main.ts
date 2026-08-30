@@ -80,7 +80,7 @@ async function runDesktop(): Promise<void> {
 
   const win = new BrowserWindow({
     width: 720,
-    height: 600,
+    height: 700, // v0.5.1：内容（含版本选择行）变高，拉长避免底部按钮被切
     frame: false, // 无边框：自绘标题栏（与 Go 版一致）
     resizable: false,
     show: false,
