@@ -6,7 +6,7 @@
 // 停止 = 直接结束子进程（不再按端口找 PID）；启动器退出时自动停止 dsh。
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, existsSync, statSync, readFileSync, readSync } from 'node:fs';
+import { openSync, closeSync, existsSync, statSync, readSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
