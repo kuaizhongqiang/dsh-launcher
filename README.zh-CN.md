@@ -23,7 +23,7 @@ dsh 的 **Windows 单文件安装 + 启动引导器**。双击 `dsh-launcher.exe
 - 📥 **两种构建** — 便携单文件（随处拷走）**与** NSIS 安装版（可固定到任务栏、带开始菜单快捷方式）
 - 🎨 **dsh web 同款视觉** — dsw 设计系统：背景极光、毛玻璃卡片、脉冲状态点、按钮辉光、不定进度条
 - ⚡ **一键启动** — 未安装 dsh 时自动引导（目录选择 → 版本选择 → 安装 → 启动），已安装则直接拉起服务并打开浏览器
-- 🔑 **token 自动登录** — dsh v0.1.2+ 采用启动令牌认证：`start` 自动抓取 dsh 打印的带 token URL 并打开，浏览器自动换 cookie（30 天有效），无需手动复制 token
+- 🔑 **token 自动登录** — dsh v0.1.2+ 采用启动令牌认证：`start` 自动抓取 dsh 打印的带 token URL 并打开，浏览器自动换 cookie（30 天有效），无需手动复制 token；token 同时写入**共享文件** `$DSH_HOME/launch-token.json`（默认 `~/.dsh/`），dsh-vscode 插件直接读取，从哪边启动 dsh 另一边都能自动认证
 - 🔗 **绑定运行** — dsh 作为启动器子进程运行（继承启动器的隐藏控制台）：执行工具不再弹 PowerShell/cmd 窗口；关闭启动器即停止 dsh
 - 🛑 **停止 dsh** — 直接结束绑定的子进程（窗口「停止」按钮 / `stop` 命令；旧版遗留的独立进程按端口回退结束）
 - 🔀 **挪动 dsh** — 把已安装的 dsh 包挪到任意路径（跨盘自动复制+删除）；dsh 运行中时拒绝移动
@@ -90,6 +90,12 @@ dsh-launcher.exe --help
 > URL 访问。`start` 会从 dsh 输出中自动抓取该 URL 并打开，浏览器自动换 cookie（30 天）。
 > 若 dsh 已由其它进程启动（`start` 检测到端口占用），仍会尝试从日志抓取当前 token URL。
 > dsh 每次重启 token 都会变化，重新 `start` 即可。日志见 `%TEMP%\dsh-launcher-child.log`。
+>
+> **共享 token 文件**：本启动器拉起 dsh 时，会把 token 写入 `$DSH_HOME/launch-token.json`
+> （默认 `~/.dsh/launch-token.json`），dsh-vscode 插件直接读取即可认证，无需手动抄 token；
+> 反过来，dsh 已由 vscode 插件拉起时，`start` 会**优先读共享文件**打开带 token 的 URL。
+> 启动器停止自己的 dsh 子进程时按 pid 匹配清理该文件，不会误删另一应用维护的记录。
+> 规范见 `DSH-LAUNCH-TOKEN-FILE.md`。
 
 日志写入 `%TEMP%\dsh-launcher.log`（窗口版无控制台，以此为准）。
 
@@ -166,6 +172,7 @@ src/                          TS 逻辑（与语言无关，Node/Electron 通用
 ├── install.ts                install / move 流程（github 源码构建 / npm 双源）
 ├── console.ts                隐藏控制台（koffi AllocConsole + SW_HIDE，供 dsh 子进程继承）
 ├── launch.ts                 start/stop（dsh 作为子进程绑定启动器、抓取 token URL）
+├── tokenFile.ts              共享启动 token 文件（`$DSH_HOME/launch-token.json` 读写清理，与 dsh-vscode 同一规范）
 ├── update.ts                 升级检测（GitHub tag + npm registry + GitHub Release）
 ├── server.ts                 node:http 本地服务（UI 静态资源 + REST bridge + SSE 日志）
 ├── cli.ts                    命令行入口

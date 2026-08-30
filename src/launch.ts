@@ -15,6 +15,7 @@ import * as log from './log.js';
 import * as node from './node.js';
 import { openURL } from './win.js';
 import type { Config } from './config.js';
+import { clearLaunchToken, launchTokenFilePath, readLaunchToken, tokenFromUrl, tokenUrlFromLogText, writeLaunchToken } from './tokenFile.js';
 
 const readyTimeoutMs = 60_000;
 const pollIntervalMs = 500;
@@ -40,10 +41,7 @@ export function url(cfg: Config): string {
  */
 export function tokenUrlFromLog(): string | undefined {
   try {
-    const text = readFileSync(childLogPath(), 'utf8');
-    const re = /(https?:\/\/[^\s"'<>]+?\?token=[A-Za-z0-9_-]+)/g;
-    const matches = [...text.matchAll(re)];
-    return matches.length === 0 ? undefined : matches[matches.length - 1][1];
+    return tokenUrlFromLogText(readFileSync(childLogPath(), 'utf8'));
   } catch {
     return undefined;
   }
@@ -65,10 +63,28 @@ async function waitForTokenUrl(timeoutMs: number): Promise<string | undefined> {
   return last;
 }
 
-/** 打开浏览器：优先带 token 的 URL（新版自动登录），否则普通 URL（旧版兼容）。 */
-async function openAccessUrl(cfg: Config): Promise<void> {
+/**
+ * 打开浏览器：优先带 token 的 URL（新版自动登录），否则普通 URL（旧版兼容）。
+ * @param pid - 本启动器拉起的 dsh 子进程 PID。有 pid = 刚拉起的实例：从子进程
+ *   日志取 token 并写入共享 token 文件（供 dsh-vscode 插件读取）；无 pid =
+ *   dsh 已在运行（可能是 vscode 插件拉起的）：自己的日志没有 token，直接读
+ *   共享 token 文件兜底，避免空等日志 5 秒。
+ */
+async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
   const u = url(cfg);
-  const tokenUrl = await waitForTokenUrl(5_000);
+  let tokenUrl: string | undefined;
+  if (pid !== undefined) {
+    tokenUrl = await waitForTokenUrl(5_000);
+    if (tokenUrl !== undefined) {
+      const token = tokenFromUrl(tokenUrl);
+      if (token !== undefined) {
+        writeLaunchToken({ token, url: tokenUrl, port: cfg.port, pid, source: 'dsh-launcher' });
+        log.info(`已写入共享 token 文件 ${launchTokenFilePath()}（供 dsh-vscode 插件读取）`);
+      }
+    }
+  } else {
+    tokenUrl = readLaunchToken()?.url;
+  }
   const target = tokenUrl ?? u;
   try {
     await openURL(target);
@@ -115,6 +131,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   if (await isRunning(cfg)) {
     log.info(`dsh 已在运行：${u}`);
     if (!noBrowser) {
+      // dsh 可能由 vscode 插件等拉起：openAccessUrl 内部会读共享 token 文件。
       await openAccessUrl(cfg);
     }
     return true;
@@ -164,7 +181,8 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   log.info(`${u} 已就绪`);
 
   if (!noBrowser) {
-    await openAccessUrl(cfg);
+    // 就绪时子进程必然存活；child?.pid 仅满足 TS 收窄（null 分支实际不可达）。
+    await openAccessUrl(cfg, child?.pid);
   }
 
   log.info(`dsh 已启动并绑定启动器：${u}（关闭启动器将同时停止 dsh）`);
@@ -185,6 +203,8 @@ export async function stop(cfg: Config): Promise<void> {
       log.info(`结束 dsh 子进程 PID ${pid}……`);
       try {
         await killPID(pid);
+        // 子进程已结束：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
+        clearLaunchToken(pid);
       } catch (e) {
         log.warn(`结束 PID ${pid} 失败：${(e as Error).message}`);
       }
@@ -212,6 +232,8 @@ export function stopChildSilently(): void {
   const pid = child?.pid;
   child = null;
   if (!pid) return;
+  // 退出即停服务：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
+  clearLaunchToken(pid);
   try {
     execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
   } catch {

@@ -26,7 +26,7 @@ A single-file Windows launcher for **dsh**. Double-click `dsh-launcher.exe` to o
 - 📥 **Two build flavors** — portable exe (copy anywhere) **and** NSIS installer (taskbar-pinnable, Start Menu shortcut)
 - 🎨 **dsh web visuals** — dsw design system: aurora background, frosted-glass card, pulsing status dots, button glow, indeterminate progress bar
 - ⚡ **One-click start** — installs dsh if missing (directory + version picker), then starts the server and opens your browser
-- 🔑 **Token auto-login** — dsh v0.1.2+ uses launch-token auth: `start` grabs the token URL dsh prints and opens it, so the browser exchanges a 30-day cookie automatically
+- 🔑 **Token auto-login** — dsh v0.1.2+ uses launch-token auth: `start` grabs the token URL dsh prints and opens it, so the browser exchanges a 30-day cookie automatically. The token is also written to the **shared token file** `$DSH_HOME/launch-token.json` (`~/.dsh`), readable by the [dsh-vscode](https://github.com/kuaizhongqiang/dsh-vscode) extension — whoever starts dsh (launcher or the extension), the other side reads the token from the same file, no manual copy on every restart
 - 🔗 **Bound server** — dsh runs as a child of the launcher, inheriting its hidden console: executing tools no longer pops up PowerShell/cmd windows; closing the launcher stops dsh
 - 🛑 **Stop** — ends the bound child process directly (GUI **停止** button / `stop` command; legacy detached processes are still resolved by port as a fallback)
 - 🔀 **Relocate dsh** — move the installed dsh package to any path (cross-drive copy+delete); refused while dsh is running
@@ -95,6 +95,13 @@ dsh-launcher.exe --help
 > `start` extracts that URL from dsh's output and opens it, so the browser gets its 30-day cookie
 > automatically. The token rotates on every dsh restart — just run `start` again. See
 > `%TEMP%\dsh-launcher-child.log` for dsh's raw output.
+>
+> **Shared token file**: when dsh is started by this launcher, the token is persisted to
+> `$DSH_HOME/launch-token.json` (`~/.dsh`) so the [dsh-vscode](https://github.com/kuaizhongqiang/dsh-vscode)
+> extension can authenticate without a manually copied token; when dsh is *already running* (started by the
+> extension or elsewhere), `start` falls back to reading that file to open the token URL. The file is removed
+> when the launcher stops its own bound child (pid-matched), never clobbering another app's record.
+> Spec: `DSH-LAUNCH-TOKEN-FILE.md`.
 
 Logs go to `%TEMP%\dsh-launcher.log` (the windowed build has no console).
 
@@ -150,6 +157,7 @@ src/                          TS logic (shared by CLI and Electron)
 ├── install.ts                install / move flows (github source build / npm)
 ├── console.ts                hidden console (koffi AllocConsole + SW_HIDE, inherited by the dsh child)
 ├── launch.ts                 start/stop (dsh as a bound child process, token-URL grab)
+├── tokenFile.ts              shared launch-token file (`$DSH_HOME/launch-token.json`, read/write/clear — same spec as dsh-vscode)
 ├── update.ts                 upgrade checks (GitHub tag + npm registry + GitHub Release)
 ├── server.ts                 local node:http service (UI assets + REST bridge + SSE logs)
 ├── cli.ts                    CLI entry
