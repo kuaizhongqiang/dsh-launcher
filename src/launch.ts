@@ -68,29 +68,49 @@ async function waitForTokenUrl(timeoutMs: number): Promise<string | undefined> {
  * @param pid - 本启动器拉起的 dsh 子进程 PID。有 pid = 刚拉起的实例：从子进程
  *   日志取 token 并写入共享 token 文件（供 dsh-vscode 插件读取）；无 pid =
  *   dsh 已在运行（可能是 vscode 插件拉起的）：自己的日志没有 token，直接读
- *   共享 token 文件兜底，避免空等日志 5 秒。
+ *   共享 token 文件兜底，避免空等日志。
+ *
+ * token 获取顺序（新拉起实例）：先等子进程日志（命中即返回，正常机器 1 秒内），
+ * 超时后读共享 token 文件兜底；仍拿不到才打开普通 URL，并记录警告
+ * （浏览器会提示 "dsh web authentication required"）。
  */
+const TOKEN_WAIT_MS = 10_000;
+
 async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
   const u = url(cfg);
   let tokenUrl: string | undefined;
+  let tokenSource: string | undefined;
   if (pid !== undefined) {
-    tokenUrl = await waitForTokenUrl(5_000);
+    tokenUrl = await waitForTokenUrl(TOKEN_WAIT_MS);
     if (tokenUrl !== undefined) {
       const token = tokenFromUrl(tokenUrl);
       if (token !== undefined) {
         writeLaunchToken({ token, url: tokenUrl, port: cfg.port, pid, source: 'dsh-launcher' });
         log.info(`已写入共享 token 文件 ${launchTokenFilePath()}（供 dsh-vscode 插件读取）`);
       }
+      tokenSource = '子进程日志';
+    } else {
+      // 等 TOKEN_WAIT_MS 仍没在日志看到 token（dsh 启动慢 / 日志延迟）：
+      // 读共享 token 文件兜底，避免直接打开不带 token 的 URL 导致浏览器 401。
+      const shared = readLaunchToken();
+      if (shared !== undefined && tokenFromUrl(shared.url) !== undefined) {
+        tokenUrl = shared.url;
+        tokenSource = `共享 token 文件（来源 ${shared.source}，pid=${shared.pid ?? '?'}）`;
+        log.warn(`等 ${TOKEN_WAIT_MS / 1000}s 未在子进程日志看到 token URL，改用共享 token 文件兜底`);
+      }
     }
   } else {
     tokenUrl = readLaunchToken()?.url;
+    tokenSource = tokenUrl !== undefined ? '共享 token 文件' : undefined;
   }
   const target = tokenUrl ?? u;
   try {
     await openURL(target);
-    log.info(tokenUrl
-      ? `已在默认浏览器打开带 token 的访问地址（自动登录）：${target}`
-      : `已在默认浏览器打开 ${u}`);
+    if (tokenUrl !== undefined) {
+      log.info(`已在默认浏览器打开带 token 的访问地址（自动登录，来源：${tokenSource}）：${target}`);
+    } else {
+      log.warn(`未获取到 token URL，已在默认浏览器打开 ${u}；若浏览器提示 "dsh web authentication required"，请重新运行启动器（dsh 重启后 token 会变化）`);
+    }
   } catch (e) {
     log.warn(`打开浏览器失败：${(e as Error).message}（可手动访问 ${target}）`);
   }
