@@ -33,6 +33,31 @@ const mock = {
   async move(dir) { await delay(800); return { ok: true }; },
   async checkUpdate() { await delay(1200); return { dshAvail: false, launcherAvail: false }; },
   async browse() { return 'C:\\Users\\kua\\AppData\\Local\\dsh'; },
+  async getEcosystem() {
+    return {
+      ok: true,
+      busy: false,
+      label: '默认（内嵌）',
+      manifest: {
+        dsh: { source: 'github', version: 'latest' },
+        pluginsCommit: '15ffcfd7',
+        packages: [
+          { id: 'credentials', dir: 'plugins/credentials-dsh-plugin' },
+          { id: 'stock', dir: 'plugins/stock-dsh-plugin' },
+          { id: 'github', dir: 'plugins/github-dsh-plugin' },
+        ],
+        skills: true,
+      },
+      state: null,
+      pluginsDir: 'C:\\Users\\kua\\.dsh\\dsh-plugins',
+    };
+  },
+  async pullEcosystem(opts) {
+    await delay(300);
+    streamEcoLogs();
+    await delay(2200);
+    return { ok: true };
+  },
 };
 
 const bridge = window.launcherBridge || mock;
@@ -176,6 +201,7 @@ function renderButtons() {
   $('btnBrowse').disabled = state.busy;
   $('btnUpdate').disabled = state.busy || state.updating;
   $('btnUpdate').textContent = state.updating ? '检查中…' : '检查更新';
+  if (typeof renderEcoButtons === 'function') renderEcoButtons();
 }
 
 function setBusy(b) {
@@ -322,6 +348,146 @@ async function onUpdate() {
   renderButtons();
 }
 
+/* ---------- 生态（M2） ---------- */
+
+const eco = { busy: false, dry: false, rows: {} };
+
+function streamEcoLogs() {
+  const lines = [
+    ['生态清单：默认（内嵌）', ''],
+    ['插件源锁定：15ffcfd7（https://github.com/kuaizhongqiang/dsh-plugins.git）', ''],
+    ['sha256 ✓ plugins/credentials-dsh-plugin/install.ps1', 'ok'],
+    ['插件 credentials 安装完成', 'ok'],
+    ['生态状态已写入 ecosystem-state.json', 'ok'],
+  ];
+  lines.forEach(([t, k], i) => setTimeout(() => log(t, k), 350 + i * 320));
+}
+
+function ecoChip(okFlag) {
+  const s = document.createElement('span');
+  s.className = 'eco-chip ' + (okFlag ? 'ok' : 'no');
+  s.textContent = okFlag ? '已装' : '未装';
+  return s;
+}
+
+function ecoCheckedIds() {
+  return Object.keys(eco.rows).filter((id) => eco.rows[id] && eco.rows[id].checked);
+}
+
+function renderEcoButtons() {
+  const busy = state.busy || eco.busy;
+  $('btnEcoPull').disabled = busy;
+  $('btnEcoDry').disabled = busy || ecoCheckedIds().length === 0;
+  $('btnEcoRefresh').disabled = busy;
+  $('btnEcoPull').textContent = eco.busy ? '拉齐中…' : (eco.dry ? '校验中…' : '拉齐勾选项');
+  $('btnEcoDry').textContent = eco.dry ? '校验中…' : '仅校验（dry-run）';
+}
+
+async function refreshEcosystem() {
+  let d;
+  try {
+    d = await bridge.getEcosystem();
+  } catch (e) {
+    log('生态状态读取失败：' + e.message, 'err');
+    return;
+  }
+  if (!d || !d.ok) {
+    log('生态状态读取失败：' + (d && d.message ? d.message : '未知错误'), 'err');
+    return;
+  }
+  eco.busy = !!d.busy;
+  const commit = (d.manifest.pluginsCommit || '').slice(0, 8);
+  $('ecoMeta').textContent =
+    (d.label || '') + ' · 插件源 ' + commit + ' · dsh ' + d.manifest.dsh.source + '/' + d.manifest.dsh.version +
+    (d.manifest.skills ? ' · skills ✓' : '');
+  // 状态摘要
+  const st = d.state;
+  let summary = '清单共 ' + d.manifest.packages.length + ' 个插件包';
+  if (st && st.updatedAt) {
+    const nOk = st.plugins ? Object.values(st.plugins).filter((p) => p && p.ok).length : 0;
+    summary += ' · 上次拉齐 ' + nOk + ' 个成功' + (st.core && st.core.installed ? ' · core 已装' : ' · core 未装') +
+      ' · ' + new Date(st.updatedAt).toLocaleString('zh-CN', { hour12: false });
+  } else {
+    summary += ' · 尚无拉齐记录（运行一次「拉齐勾选项」）';
+  }
+  $('ecoState').textContent = summary;
+  // 插件列表（首次全选；后续保留用户勾选）
+  const box = $('ecoPkgs');
+  const prevChecked = ecoCheckedIds();
+  box.textContent = '';
+  eco.rows = {};
+  for (const p of d.manifest.packages) {
+    const label = document.createElement('label');
+    label.className = 'eco-chk';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = prevChecked.length === 0 || prevChecked.includes(p.id);
+    const stp = st && st.plugins ? st.plugins[p.id] : undefined;
+    cb.addEventListener('change', renderEcoButtons);
+    label.appendChild(cb);
+    const name = document.createElement('span');
+    name.textContent = p.id;
+    label.appendChild(name);
+    label.appendChild(ecoChip(!!(stp && stp.ok)));
+    label.title = p.dir;
+    eco.rows[p.id] = cb;
+    box.appendChild(label);
+  }
+  renderEcoButtons();
+  return d;
+}
+
+async function onEcoPull(dryRun) {
+  if (state.busy || eco.busy) return;
+  const ids = ecoCheckedIds();
+  const wantCore = $('ecoCore').checked;
+  const wantSkills = $('ecoSkills').checked;
+  if (ids.length === 0 && !wantCore && !wantSkills) {
+    log('请至少勾选一个插件，或开启 core / 技能。', 'warn');
+    return;
+  }
+  eco.busy = true;
+  eco.dry = dryRun;
+  renderEcoButtons();
+  log((dryRun ? '生态 dry-run 校验开始（仅校验清单与 sha256，不安装）……' : '生态拉齐开始……'), 'brand');
+  try {
+    const r = await bridge.pullEcosystem({
+      plugins: ids,
+      core: wantCore,
+      skills: wantSkills,
+      dryRun: dryRun,
+    });
+    if (!r.ok) throw new Error(r.message || '拉齐启动失败');
+    log(dryRun ? 'dry-run 已开始（进度见日志）。' : '拉齐已开始（进度见日志）。', 'ok');
+  } catch (e) {
+    log('生态拉齐启动失败：' + e.message, 'err');
+    eco.busy = false;
+    eco.dry = false;
+    renderEcoButtons();
+    return;
+  }
+  // 轮询服务端 busy 直到结束（最长 20 分钟）
+  const deadline = Date.now() + 20 * 60 * 1000;
+  const timer = setInterval(async () => {
+    try {
+      const d = await bridge.getEcosystem();
+      if (!d || !d.busy || Date.now() > deadline) {
+        clearInterval(timer);
+        eco.busy = false;
+        eco.dry = false;
+        await refreshEcosystem();
+        await refreshStatus();
+        renderButtons();
+      }
+    } catch (e) {
+      clearInterval(timer);
+      eco.busy = false;
+      eco.dry = false;
+      renderEcoButtons();
+    }
+  }, 1500);
+}
+
 function onExit() {
   log('dsh 绑定启动器运行：退出将同时停止 dsh。', 'dim');
   // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit → 停止 dsh）
@@ -362,6 +528,9 @@ function onExit() {
   $('btnRefreshTags').addEventListener('click', refreshTags);
   $('btnExit').addEventListener('click', onExit);
   $('btnClose').addEventListener('click', onExit);
+  $('btnEcoRefresh').addEventListener('click', refreshEcosystem);
+  $('btnEcoDry').addEventListener('click', () => onEcoPull(true));
+  $('btnEcoPull').addEventListener('click', () => onEcoPull(false));
   log('dsh-launcher 已就绪。', '');
 
   // 预填安装目录（失败忽略）
@@ -383,6 +552,8 @@ function onExit() {
   // 拉取 GitHub 可选版本列表（失败静默，默认「最新」即可用）
   refreshTags();
   renderButtons();
+  // 生态页首载（异步；失败不阻塞主界面）
+  void refreshEcosystem();
 })();
 
 /* ---------- 真实后端契约（Node SEA 版，由服务端注入） ----------

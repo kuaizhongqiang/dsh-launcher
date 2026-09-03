@@ -491,3 +491,17 @@ body.desktop .proto-badge {
   opacity: 0.6;
   pointer-events: none;
 }
+
+/* ---- 生态卡片（M2） ---- */
+.eco-card .card-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.eco-card .card-row .card-title { margin: 0; }
+.eco-meta { font-size: 12px; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eco-state { margin: 2px 0 10px; font-size: 12px; opacity: 0.85; }
+.eco-pkgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 4px 12px; }
+.eco-chk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; min-width: 0; }
+.eco-chk span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eco-foot { display: flex; align-items: center; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+.btn-sm { padding: 3px 12px; font-size: 12px; min-height: 24px; }
+.eco-chip { font-size: 11px; padding: 0 7px; border-radius: 9px; line-height: 16px; flex: none; }
+.eco-chip.ok { background: rgba(126, 226, 168, 0.14); color: #7ee2a8; }
+.eco-chip.no { background: rgba(255, 138, 138, 0.14); color: #ff8a8a; }
