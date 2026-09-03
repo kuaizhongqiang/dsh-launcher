@@ -27,7 +27,7 @@ declare const __dirname: string;
 
 const KNOWN_COMMANDS = new Set([
   'install', 'start', 'stop', 'restart', 'move', 'status', 'check-update', 'ui',
-  'connections', 'profile', 'pull',
+  'connections', 'profile', 'pull', 'setup',
   '--help', '-h', 'help', '--version', '-v',
 ]);
 

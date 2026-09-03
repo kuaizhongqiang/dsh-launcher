@@ -19,6 +19,9 @@ import * as node from './node.js';
 /** 生态状态文件（D4：生态状态在 launcher 旁，与 launcher.json 同目录）。 */
 export const EcosystemStateFileName = 'ecosystem-state.json';
 
+/** 版本 lock 文件（M8/Phase 8：多台机器收敛到同一版本组合）。 */
+export const EcosystemLockFileName = 'ecosystem-lock.json';
+
 // ---------------------------------------------------------------- 类型
 
 export type DshSource = node.DshSource;
@@ -76,9 +79,9 @@ export interface EcosystemState {
   manifest: { label: string; pluginsCommit: string };
 }
 
-/** `pull` 选项（M1）。 */
+/** `pull` 选项（M1；M8 增 updateLock/trustPluginsDir）。 */
 export interface PullOptions {
-  /** 清单来源：undefined=默认（内嵌）；https://…=远程（强制 HTTPS）；其余按本地文件路径。 */
+  /** 清单来源：undefined=默认（lock 优先，其次内嵌）；https://…=远程（强制 HTTPS）；其余按本地文件路径。 */
   manifest?: string;
   /** 插件选择：undefined=全部；空数组=不装插件；数组=指定 id 子集。 */
   plugins?: string[] | null;
@@ -90,6 +93,10 @@ export interface PullOptions {
   dryRun?: boolean;
   /** 显式 dsh-plugins 检出目录（覆盖环境变量与默认目录；供测试/特殊布局）。 */
   pluginsDir?: string;
+  /** M8：pull 成功后把当前清单写入 lock（显式 --manifest 时为「确认升级」语义）。 */
+  updateLock?: boolean;
+  /** M7/离线：信任 pluginsDir 为既有检出（跳过 .git/锁 commit 校验，用于离线包目录）。 */
+  trustPluginsDir?: boolean;
 }
 
 // ---------------------------------------------------------------- 默认清单
@@ -251,6 +258,7 @@ export async function ensurePluginsSource(
   manifest: EcosystemManifest,
   explicit?: string,
   dryRun = false,
+  trust = false,
 ): Promise<string> {
   const src = manifest.plugins.source;
   const dir = pluginsRootDir(explicit);
@@ -258,8 +266,16 @@ export async function ensurePluginsSource(
     if (dryRun) {
       throw new Error(`dry-run：插件检出不存在（${dir}），无法校验；先执行真实 pull 克隆后重试`);
     }
+    if (trust && explicit) {
+      throw new Error(`信任的插件目录不存在：${dir}（离线包缺少 plugins/？）`);
+    }
     log.info(`克隆 dsh-plugins（锁 ${src.commit.slice(0, 8)}）：${src.repo}`);
     await clonePinned(src.repo, src.commit, dir);
+    return dir;
+  }
+  if (trust && explicit) {
+    // M7/离线包：显式给的目录按既有内容信任（跳过 git/锁 commit 校验）
+    log.info(`使用信任插件目录（跳过锁 commit 校验）：${dir}`);
     return dir;
   }
   if (!existsSync(join(dir, '.git'))) {
@@ -343,14 +359,63 @@ export function ecosystemStatePath(): string {
   return join(dirname(config.configPath()), EcosystemStateFileName);
 }
 
+// ---------------------------------------------------------------- 版本 lock（M8）
+
+/** ecosystem-lock.json v1：多机收敛的版本组合快照。 */
+export interface EcosystemLock {
+  version: 1;
+  lockedAt: string;
+  label: string;
+  manifest: EcosystemManifest;
+}
+
+export function ecosystemLockPath(): string {
+  return join(dirname(config.configPath()), EcosystemLockFileName);
+}
+
+/** 读取 lock（缺失/损坏返回 undefined）。 */
+export function loadLock(): EcosystemLock | undefined {
+  try {
+    const lock = JSON.parse(readFileSync(ecosystemLockPath(), 'utf8')) as EcosystemLock;
+    if (lock.version !== 1 || !lock.manifest) return undefined;
+    return lock;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 写 lock（pull 成功后 / `--update-lock` 确认升级时）。 */
+export function writeLock(manifest: EcosystemManifest, label: string): void {
+  validateManifest(manifest);
+  const lock: EcosystemLock = { version: 1, lockedAt: new Date().toISOString(), label, manifest };
+  writeFileSync(ecosystemLockPath(), JSON.stringify(lock, null, 2) + '\n', 'utf8');
+  log.info(`生态 lock 已更新：${ecosystemLockPath()}（${label}）`);
+}
+
 /**
  * `pull` 主流程：core（缺口时）→ 插件 install.ps1（逐个）→ 技能 install-skills.ps1 → 写状态。
  * 供应链校验通过才执行对应脚本；失败项记录到状态与汇总错误。
  */
 export async function runPull(opts: PullOptions = {}): Promise<void> {
-  const { manifest: manifestSpec, plugins: pluginSel, skills = true, core = true, dryRun = false, pluginsDir } = opts;
-  const { manifest, label } = await loadManifest(manifestSpec);
-  const labelShort = manifestSpec && manifestSpec !== 'default' ? manifestSpec : '默认';
+  const { manifest: manifestSpec, plugins: pluginSel, skills = true, core = true, dryRun = false, pluginsDir, updateLock = false, trustPluginsDir = false } = opts;
+  // M8：无显式清单时 lock 优先（多机收敛同一版本组合）；lock 不存在才用默认内嵌
+  const specExplicit = !!manifestSpec && manifestSpec !== 'default';
+  let manifest: EcosystemManifest;
+  let label: string;
+  let lockUsed = false;
+  if (!specExplicit) {
+    const lock = loadLock();
+    if (lock) {
+      validateManifest(lock.manifest);
+      manifest = lock.manifest;
+      label = `lock（${lock.label} @ ${lock.lockedAt}）`;
+      lockUsed = true;
+    } else {
+      ({ manifest, label } = await loadManifest(manifestSpec));
+    }
+  } else {
+    ({ manifest, label } = await loadManifest(manifestSpec));
+  }
   log.info(`生态清单：${label}（dsh=${manifest.dsh.source}/${manifest.dsh.version}）`);
   log.info(`插件源锁定：${manifest.plugins.source.commit.slice(0, 8)}（${manifest.plugins.source.repo}）`);
 
@@ -391,7 +456,7 @@ export async function runPull(opts: PullOptions = {}): Promise<void> {
   // 2. 插件源 + 供应链校验
   const pluginFailures: string[] = [];
   if (selected.length > 0) {
-    const root = await ensurePluginsSource(manifest, pluginsDir, dryRun);
+    const root = await ensurePluginsSource(manifest, pluginsDir, dryRun, trustPluginsDir && !!pluginsDir);
     verifyHashes(manifest, root, selected);
     for (const id of selected) {
       const pkg = manifest.plugins.packages.find((p) => p.id === id)!;
@@ -417,7 +482,7 @@ export async function runPull(opts: PullOptions = {}): Promise<void> {
   // 3. 技能（与插件选择无关：清单声明了即处理）
   let skillsRes: { ok: boolean; installedAt?: string; error?: string } | undefined;
   if (skills && manifest.skills) {
-    const root = await ensurePluginsSource(manifest, pluginsDir, dryRun);
+    const root = await ensurePluginsSource(manifest, pluginsDir, dryRun, trustPluginsDir && !!pluginsDir);
     if (dryRun) {
       log.info(`[dry-run] 将执行技能安装：${manifest.skills.script}`);
     } else {
@@ -450,7 +515,7 @@ export async function runPull(opts: PullOptions = {}): Promise<void> {
       core: coreState,
       plugins: pluginsState,
       ...(skillsRes || manifest.skills ? { skills: skillsRes ?? { ok: false, error: '未执行' } } : {}),
-      manifest: { label: labelShort, pluginsCommit: manifest.plugins.source.commit },
+      manifest: { label, pluginsCommit: manifest.plugins.source.commit },
     };
     writeFileSync(ecosystemStatePath(), JSON.stringify(state, null, 2) + '\n', 'utf8');
     log.info(`生态状态已写入 ${ecosystemStatePath()}`);
@@ -462,6 +527,11 @@ export async function runPull(opts: PullOptions = {}): Promise<void> {
     const bad: string[] = [...pluginFailures];
     if (skillsRes && !skillsRes.ok) bad.push('skills');
     throw new Error(`pull 完成但存在失败项：${bad.join(', ')}（详见上方日志）`);
+  }
+  // M8:lock 落盘 —— 首次 pull(无 lock)自动写;显式 --manifest + --update-lock = 确认升级;
+  // 已用 lock 时不重写(除非 updateLock 刷新)
+  if (!dryRun && (updateLock || (!specExplicit && !lockUsed))) {
+    writeLock(manifest, label);
   }
   log.info(`pull 完成：core=${coreState.installed ? '已装' : '跳过/未装'}，插件 ${selected.length} 个${dryRun ? '(dry-run)' : ''}`);
 }

@@ -26,6 +26,7 @@ import * as launch from './launch.js';
 import * as log from './log.js';
 import * as node from './node.js';
 import * as registration from './registration.js';
+import * as setup from './setup.js';
 import * as update from './update.js';
 import { VERSION } from './version.js';
 
@@ -58,6 +59,9 @@ const bridgeKey = randomBytes(16).toString('hex');
 
 /** restart 是否进行中(防并发)。 */
 let restartBusy = false;
+
+/** setup 一键部署是否进行中(防并发)。 */
+let setupBusy = false;
 
 /** 托盘图标状态用：最近一次升级检测结果（M6 黄色=有更新）。 */
 export function lastUpdateState(): { dshAvail: boolean; launcherAvail: boolean } {
@@ -93,6 +97,7 @@ const bridgeScript = `<script>
     getConnections: function () { return api('/api/connections'); },
     useConnection: function (id) { return api('/api/connections/use', { id: id }); },
     restartDsh: function () { return api('/api/dsh/restart?key=${bridgeKey}', {}); },
+    setupFlow: function (opts) { return api('/api/setup', opts || {}); },
     defaultDir: ${JSON.stringify(defaultInstallDir())},
   };
   var es = new EventSource('/api/events');
@@ -560,6 +565,40 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
           log.error(`restart 失败：${errMessage(e)}`);
         } finally {
           restartBusy = false;
+        }
+      })();
+      return;
+    }
+    case '/api/setup': {
+      // M7:一键部署(异步;core→pull→个人层→连接→start;进度走 SSE)
+      if (setupBusy) {
+        json(res, 409, { ok: false, message: '一键部署进行中' });
+        return;
+      }
+      const body = await readBody(req);
+      const str = (k: string): string | undefined => (typeof body[k] === 'string' && (body[k] as string).length > 0 ? (body[k] as string) : undefined);
+      const rawPlugins = body.plugins;
+      const opts: setup.SetupOptions = {
+        manifest: str('manifest'),
+        offlineDir: str('offlineDir'),
+        profileDir: str('profileDir'),
+        profileIn: str('profileIn'),
+        password: str('password'),
+        connection: str('connection'),
+        plugins: Array.isArray(rawPlugins) ? (rawPlugins as unknown[]).filter((x): x is string => typeof x === 'string') : undefined,
+        noStart: body.noStart === true,
+      };
+      setupBusy = true;
+      json(res, 202, { ok: true, message: '一键部署已开始（进度见日志）' });
+      void (async () => {
+        try {
+          log.info('一键部署开始（GUI 触发）……');
+          await setup.runSetup(opts);
+          log.info('一键部署完成。');
+        } catch (e) {
+          log.error(`一键部署失败：${errMessage(e)}`);
+        } finally {
+          setupBusy = false;
         }
       })();
       return;
