@@ -18,6 +18,7 @@ import appJs from '../ui/app.js';
 import faviconSvg from '../ui/favicon.svg';
 
 import * as config from './config.js';
+import * as connections from './connections.js';
 import * as ecosystem from './ecosystem.js';
 import * as install from './install.js';
 import * as launch from './launch.js';
@@ -76,6 +77,8 @@ const bridgeScript = `<script>
     exit: function () { return api('/api/exit', {}); },
     getEcosystem: function () { return api('/api/ecosystem'); },
     pullEcosystem: function (opts) { return api('/api/ecosystem/pull', opts || {}); },
+    getConnections: function () { return api('/api/connections'); },
+    useConnection: function (id) { return api('/api/connections/use', { id: id }); },
     defaultDir: ${JSON.stringify(defaultInstallDir())},
   };
   var es = new EventSource('/api/events');
@@ -176,12 +179,32 @@ async function statusPayload(): Promise<Record<string, unknown>> {
       /* ignore */
     }
   }
-  const running = cfg ? await launch.isRunning(cfg) : false;
+  // M5：运行/状态语义跟随激活连接（remote = HTTP ping，不 spawn）
+  const { conn } = connections.resolveActive(cfg);
+  let running = false;
+  if (conn.kind === 'remote' && conn.url) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      try {
+        const r = await fetch(conn.url, { signal: ctrl.signal });
+        running = r.status >= 200;
+        r.body?.cancel().catch(() => {});
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      running = false;
+    }
+  } else {
+    running = cfg ? await launch.isRunning(cfg) : false;
+  }
   return {
     node: await safeDetect(),
     npm: await safeNpm(),
     dsh: { installed, version: dshVer ? 'v' + dshVer.replace(/^dsh-/, '').replace(/^v/, '') : '' },
-    port: { number: cfg?.port ?? config.DefaultPort, running },
+    port: { number: conn.kind === 'local' ? conn.port ?? cfg?.port ?? config.DefaultPort : cfg?.port ?? config.DefaultPort, running },
+    connection: { id: conn.id, kind: conn.kind, name: conn.name ?? conn.id, port: conn.port, url: conn.url },
     update: { ...updateState },
     defaultDir: defaultInstallDir(),
     installedDir: installed && cfg ? cfg.dshInstallDir : '',
@@ -362,6 +385,77 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
         json(res, 200, { ...updateState });
       } finally {
         updateState.checking = false;
+      }
+      return;
+    }
+    case '/api/connections': {
+      // M5：连接组列表（token 不出后端，只回 hasToken）
+      const cfg = config.load();
+      const { conn: active } = connections.resolveActive(cfg);
+      const list = connections.listConnections(cfg).map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        name: c.name ?? c.id,
+        port: c.port,
+        url: c.url,
+        hasToken: !!c.token,
+      }));
+      json(res, 200, { ok: true, active: active.id, list, fromFile: connections.loadConnections() !== undefined });
+      return;
+    }
+    case '/api/connections/use': {
+      const body = await readBody(req);
+      const id = typeof body.id === 'string' ? body.id : '';
+      if (!id) {
+        json(res, 400, { ok: false, message: '缺少 id' });
+        return;
+      }
+      try {
+        connections.useConnection(id);
+        log.info(`激活连接 → ${id}（GUI 切换，已写变更标记）`);
+        json(res, 200, { ok: true, active: id });
+      } catch (e) {
+        json(res, 400, { ok: false, message: errMessage(e) });
+      }
+      return;
+    }
+    case '/api/connections/add': {
+      const body = await readBody(req);
+      const id = typeof body.id === 'string' ? body.id : '';
+      const name = typeof body.name === 'string' ? body.name : undefined;
+      try {
+        if (body.kind === 'local') {
+          connections.addConnection({ id, kind: 'local', name, port: Number(body.port) });
+        } else if (body.kind === 'remote') {
+          connections.addConnection({
+            id,
+            kind: 'remote',
+            name,
+            url: typeof body.url === 'string' ? body.url : undefined,
+            token: typeof body.token === 'string' ? body.token : undefined,
+          });
+        } else {
+          json(res, 400, { ok: false, message: 'kind 必须为 local|remote' });
+          return;
+        }
+        json(res, 200, { ok: true });
+      } catch (e) {
+        json(res, 400, { ok: false, message: errMessage(e) });
+      }
+      return;
+    }
+    case '/api/connections/remove': {
+      const body = await readBody(req);
+      const id = typeof body.id === 'string' ? body.id : '';
+      if (!id) {
+        json(res, 400, { ok: false, message: '缺少 id' });
+        return;
+      }
+      try {
+        connections.removeConnection(id);
+        json(res, 200, { ok: true });
+      } catch (e) {
+        json(res, 400, { ok: false, message: errMessage(e) });
       }
       return;
     }

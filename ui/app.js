@@ -58,6 +58,18 @@ const mock = {
     await delay(2200);
     return { ok: true };
   },
+  async getConnections() {
+    return {
+      ok: true,
+      active: 'local-3080',
+      fromFile: false,
+      list: [
+        { id: 'local-3080', kind: 'local', name: '本机 dsh', port: 3080, hasToken: false },
+        { id: 'wan-main', kind: 'remote', name: '广域网 dsh', url: 'https://dsh.example.com', hasToken: true },
+      ],
+    };
+  },
+  async useConnection(id) { await delay(300); return { ok: true, active: id }; },
 };
 
 const bridge = window.launcherBridge || mock;
@@ -177,6 +189,11 @@ async function refreshStatus() {
   } else {
     setValue('port', '端口  —', 'dim');
     setDot('port', 'dot-dim');
+  }
+  // M5：激活连接为 remote 时，端口行改为连接语义（HTTP ping）
+  if (s.connection && s.connection.kind === 'remote') {
+    setValue('port', 'remote  ' + s.connection.id + (s.port.running ? '  可达' : '  不可达'), s.port.running ? 'green' : 'red');
+    setDot('port', s.port.running ? 'dot-green' : 'dot-red');
   }
   if (s.update.checking) {
     setValue('update', '更新  正在检查…', 'dim');
@@ -488,6 +505,45 @@ async function onEcoPull(dryRun) {
   }, 1500);
 }
 
+/* ---------- 连接切换（M5） ---------- */
+
+async function refreshConnections() {
+  let d;
+  try {
+    d = await bridge.getConnections();
+  } catch (e) {
+    log('连接列表读取失败：' + e.message, 'err');
+    return;
+  }
+  if (!d || !d.ok) return;
+  const sel = $('connSelect');
+  const active = d.active;
+  sel.replaceChildren(
+    ...d.list.map((c) => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.id + '（' + c.kind + (c.kind === 'local' && c.port ? ':' + c.port : '') + '）' + (c.hasToken ? ' · token✓' : '');
+      return o;
+    }),
+  );
+  const has = [...sel.options].some((o) => o.value === active);
+  sel.value = has ? active : sel.options.length ? sel.options[0].value : '';
+}
+
+async function onConnUse() {
+  const id = $('connSelect').value;
+  if (!id) return;
+  log('切换激活连接 → ' + id + ' …', 'brand');
+  try {
+    const r = await bridge.useConnection(id);
+    if (!r.ok) throw new Error(r.message || '切换失败');
+    log('激活连接 → ' + id + '（local 启动端口跟随；remote 健康检查+开浏览器；launch-token 照写）。', 'ok');
+  } catch (e) {
+    log('切换连接失败：' + e.message, 'err');
+  }
+  await refreshStatus();
+}
+
 function onExit() {
   log('dsh 绑定启动器运行：退出将同时停止 dsh。', 'dim');
   // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit → 停止 dsh）
@@ -531,6 +587,7 @@ function onExit() {
   $('btnEcoRefresh').addEventListener('click', refreshEcosystem);
   $('btnEcoDry').addEventListener('click', () => onEcoPull(true));
   $('btnEcoPull').addEventListener('click', () => onEcoPull(false));
+  $('connSelect').addEventListener('change', onConnUse);
   log('dsh-launcher 已就绪。', '');
 
   // 预填安装目录（失败忽略）
@@ -554,6 +611,8 @@ function onExit() {
   renderButtons();
   // 生态页首载（异步；失败不阻塞主界面）
   void refreshEcosystem();
+  // 连接列表首载（M5）
+  void refreshConnections();
 })();
 
 /* ---------- 真实后端契约（Node SEA 版，由服务端注入） ----------

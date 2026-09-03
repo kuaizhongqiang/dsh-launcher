@@ -9,6 +9,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, openSync, closeSync, existsSync, statSync, readSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import * as connections from './connections.js';
 import * as consoleWin from './console.js';
 import * as log from './log.js';
 import * as node from './node.js';
@@ -22,6 +23,9 @@ const httpTimeoutMs = 2000;
 
 /** 当前由本启动器持有的 dsh 子进程（未启动时为 null）。 */
 let child: ChildProcess | null = null;
+
+/** 当前持有的本机连接端口（D8 端口锁清理用）。 */
+let activeLocalPort: number | undefined;
 
 /** 本次 spawn 前的日志文件偏移：之后只读增量，旧进程打印的 token 不再干扰。 */
 let childLogOffset = 0;
@@ -225,19 +229,60 @@ export async function verifyInstall(cfg: Config): Promise<void> {
 }
 
 /**
- * 启动 dsh（作为本进程子进程，继承隐藏控制台）：
- *   - dsh 已在运行（端口有响应）→ 不重复启动，直接打开浏览器，返回 alreadyRunning=true
- *   - 未运行 → 启动 dsh 子进程，等待就绪（子进程提前退出则立即失败），打开浏览器
+ * remote 连接启动语义（M5 / Phase 5）：不 spawn；健康检查（含 token 自检）后带 token
+ * 打开浏览器；激活连接解析后**照写 v1 launch-token.json**（desktop 完全跟随；vscode
+ * token 跟随，serverUrl 静态不自动切换）。token 失效(401)提示更新且不打开坏 token URL。
  */
-export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
-  await verifyInstall(cfg);
-  const u = url(cfg);
+async function startRemote(conn: connections.Connection): Promise<boolean> {
+  const target = connections.buildRemoteTarget(conn);
+  log.info(`remote 连接 ${conn.id} → ${redactTokenUrl(target)}（不 spawn，健康检查后打开浏览器）`);
+  const verdict = await verifyTokenUrl(target);
+  if (verdict === 'ok') {
+    if (conn.token) {
+      // 兼容层：照写 v1 launch-token.json（url/token/source 规范不变）
+      writeLaunchToken({ token: conn.token, url: target, source: 'dsh-launcher' });
+      log.info(`已照写共享 token 文件（remote ${conn.id}；dsh-desktop 完全跟随，dsh-vscode token 跟随）`);
+    }
+  } else if (verdict === 'invalid') {
+    log.error(
+      `remote token 自检 401（token 与远端实例不匹配）：请更新该组 token ` +
+        `（connections remove/add，或编辑 ${connections.connectionsPath()}）`,
+    );
+  } else if (verdict === 'no-auth') {
+    log.warn('remote 返回 200（无 token 拦截）：认证可能由 Cloudflare Access 等外部机制接管');
+  } else {
+    log.warn(`remote 健康检查不可达（${redactTokenUrl(target)}），仍尝试打开浏览器`);
+  }
+  try {
+    await openURL(verdict === 'invalid' ? conn.url ?? target : target);
+  } catch (e) {
+    log.warn(`打开浏览器失败：${(e as Error).message}`);
+  }
+  return true;
+}
 
-  if (await isRunning(cfg)) {
+/**
+ * 启动 dsh（M5：语义跟随激活连接）：
+ *   - remote 连接 → 不 spawn，健康检查 + 打开浏览器（startRemote）
+ *   - local 连接 → 在连接端口绑子进程启动（连接端口覆盖 launcher.json 端口），
+ *     spawn 前 D8 端口锁检查、spawn 后写锁、子进程退出清理
+ *   - dsh 已在运行（端口有响应）→ 不重复启动，直接打开浏览器，返回 alreadyRunning=true
+ */
+export async function start(cfg: Config, noBrowser: boolean, conn?: connections.Connection): Promise<boolean> {
+  const effective = conn ?? connections.resolveActive(cfg).conn;
+  if (effective.kind === 'remote') {
+    return startRemote(effective);
+  }
+  // local：连接端口优先
+  const lcfg: Config = effective.port && effective.port !== cfg.port ? { ...cfg, port: effective.port } : cfg;
+  await verifyInstall(lcfg);
+  const u = url(lcfg);
+
+  if (await isRunning(lcfg)) {
     log.info(`dsh 已在运行：${u}`);
     if (!noBrowser) {
       // dsh 可能由 vscode 插件等拉起：openAccessUrl 内部会读共享 token 文件。
-      await openAccessUrl(cfg);
+      await openAccessUrl(lcfg);
     }
     return true;
   }
@@ -250,6 +295,9 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   const windowsHide = !hasHiddenConsole;
 
   const bin = node.dshBinPath(cfg.dshInstallDir, cfg.source);
+
+  // D8 ② 端口锁：spawn 前检查（他组监督者持有且存活则拒绝）
+  connections.checkPortLock(lcfg.port);
 
   // 子进程输出写入日志文件；先记录当前偏移，之后只读本次进程的增量输出
   // （旧进程留在日志里的 token 不会干扰新进程的 token 提取）。
@@ -270,7 +318,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   await new Promise<void>((resolve, reject) => {
     // 显式传 --port：dsh web 监听 launcher.json 配置的端口（而非 dsh 自己的默认值）；
     // 传 --no-open：浏览器由 launcher 统一控制打开，避免 dsh 自开一次 + launcher 再开一次。
-    const args = [bin, 'web', '--port', String(cfg.port), '--no-open'];
+    const args = [bin, 'web', '--port', String(lcfg.port), '--no-open'];
     const cp = spawn(nodeCmd, args, {
       env: nodeEnv,
       // 不 detached：作为本进程子进程，继承（隐藏）控制台。
@@ -284,6 +332,9 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
     });
     cp.on('spawn', () => {
       child = cp;
+      activeLocalPort = lcfg.port;
+      if (cp.pid) connections.writePortLock(lcfg.port, cp.pid);
+      cp.once('exit', () => connections.clearPortLock(lcfg.port));
       log.info(`dsh 子进程已启动（PID ${cp.pid}）：node ${args.join(' ')}`);
       resolve();
     });
@@ -301,7 +352,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
 
   if (!noBrowser) {
     // 就绪时子进程必然存活；child?.pid 仅满足 TS 收窄（null 分支实际不可达）。
-    await openAccessUrl(cfg, child?.pid);
+    await openAccessUrl(lcfg, child?.pid);
   }
 
   log.info(`dsh 已启动并绑定启动器：${u}（关闭启动器将同时停止 dsh）`);
@@ -314,8 +365,14 @@ export const startDetached = start;
 /** 子进程是否已提前退出（waitReady 用）。 */
 let childExited = false;
 
-/** 结束当前持有的 dsh 子进程（无则按端口回退）。 */
-export async function stop(cfg: Config): Promise<void> {
+/** 结束当前持有的 dsh 子进程（无则按端口回退）。M5：语义跟随激活连接（remote 为 no-op）。 */
+export async function stop(cfg: Config, conn?: connections.Connection): Promise<void> {
+  const effective = conn ?? connections.resolveActive(cfg).conn;
+  if (effective.kind === 'remote') {
+    log.info(`激活连接 ${effective.id} 为 remote：本机 stop 不作用于远端实例（远端重启请在远端执行）`);
+    return;
+  }
+  const port = effective.port ?? cfg.port;
   if (child && !child.killed) {
     const pid = child.pid;
     if (pid) {
@@ -329,12 +386,14 @@ export async function stop(cfg: Config): Promise<void> {
       }
     }
     child = null;
+    connections.clearPortLock(port);
+    activeLocalPort = undefined;
     return;
   }
   // 回退：按端口定位（例如上次启动器异常退出遗留的独立进程）
-  const pids = await findPIDsByPort(cfg.port);
+  const pids = await findPIDsByPort(port);
   if (pids.length === 0) {
-    throw new Error(`端口 ${cfg.port} 上没有监听中的进程，dsh 可能未在运行`);
+    throw new Error(`端口 ${port} 上没有监听中的进程，dsh 可能未在运行`);
   }
   for (const pid of pids) {
     log.info(`结束进程 PID ${pid}……`);
@@ -344,12 +403,17 @@ export async function stop(cfg: Config): Promise<void> {
       log.warn(`结束 PID ${pid} 失败：${(e as Error).message}`);
     }
   }
+  connections.clearPortLock(port);
 }
 
 /** 启动器退出时调用：静默结束子进程（不抛错）。退出钩子里不能异步，用同步 taskkill。 */
 export function stopChildSilently(): void {
   const pid = child?.pid;
   child = null;
+  if (activeLocalPort !== undefined) {
+    connections.clearPortLock(activeLocalPort);
+    activeLocalPort = undefined;
+  }
   if (!pid) return;
   // 退出即停服务：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
   clearLaunchToken('dsh-launcher', pid);
