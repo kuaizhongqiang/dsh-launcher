@@ -7,5 +7,6 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronWindow', {
   isDesktop: true,
   minimize: () => ipcRenderer.send('win:minimize'),
+  hide: () => ipcRenderer.send('win:hide'),
   close: () => ipcRenderer.send('win:close'),
 });

@@ -15,6 +15,8 @@ export interface Config {
   installedAt?: string;
   /** 安装源：github = 源码构建（默认）；npm = registry 安装（旧布局兼容）。 */
   source?: 'github' | 'npm';
+  /** M6:关窗行为——'tray'(默认)=隐藏到托盘,dsh 继续跑;'exit'=关窗即停(旧行为)。 */
+  closeAction?: 'tray' | 'exit';
   /** GitHub 访问代理（可选，git 走 socks5/http）。 */
   proxy?: string;
   // 下载源配置（可选，仅 npm 安装使用）

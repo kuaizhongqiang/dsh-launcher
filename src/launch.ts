@@ -14,7 +14,9 @@ import * as consoleWin from './console.js';
 import * as log from './log.js';
 import * as node from './node.js';
 import { openURL } from './win.js';
+import * as registration from './registration.js';
 import type { Config } from './config.js';
+import * as config from './config.js';
 import { clearLaunchToken, dshHome, launchTokenFilePath, readLaunchToken, redactTokenUrl, tokenFromUrl, tokenUrlFromLogText, writeLaunchToken } from './tokenFile.js';
 
 const readyTimeoutMs = 60_000;
@@ -135,7 +137,7 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
     if (tokenUrl !== undefined) {
       const token = tokenFromUrl(tokenUrl);
       if (token !== undefined) {
-        writeLaunchToken({ token, url: tokenUrl, port: cfg.port, pid, source: 'dsh-launcher' });
+        writeLaunchToken({ token, url: tokenUrl, port: cfg.port, pid, source: 'dsh-launcher', managedBy: 'dsh-launcher' });
         log.info(`已写入共享 token 文件 ${launchTokenFilePath()}（供 dsh-vscode 插件读取）`);
       }
       tokenSource = '子进程日志';
@@ -166,7 +168,7 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
         if (retry !== undefined && retry !== target) {
           const token = tokenFromUrl(retry);
           if (token !== undefined) {
-            writeLaunchToken({ token, url: retry, port: cfg.port, pid, source: 'dsh-launcher' });
+            writeLaunchToken({ token, url: retry, port: cfg.port, pid, source: 'dsh-launcher', managedBy: 'dsh-launcher' });
           }
           tokenUrl = retry;
           tokenSource = '子进程日志（重试）';
@@ -240,7 +242,7 @@ async function startRemote(conn: connections.Connection): Promise<boolean> {
   if (verdict === 'ok') {
     if (conn.token) {
       // 兼容层：照写 v1 launch-token.json（url/token/source 规范不变）
-      writeLaunchToken({ token: conn.token, url: target, source: 'dsh-launcher' });
+      writeLaunchToken({ token: conn.token, url: target, source: 'dsh-launcher', managedBy: 'dsh-launcher' });
       log.info(`已照写共享 token 文件（remote ${conn.id}；dsh-desktop 完全跟随，dsh-vscode token 跟随）`);
     }
   } else if (verdict === 'invalid') {
@@ -315,12 +317,21 @@ export async function start(cfg: Config, noBrowser: boolean, conn?: connections.
   if (nodePortable) log.info(`使用便携 Node runtime：${nodeCmd}`);
   const nodeEnv = node.childEnvForNode(nodeCmd);
 
+  // M6 重启 seam:注入发现链环境变量(dsh 侧经此委托 launcher 重启)
+  const launcherExe = registration.launcherExePath();
+  const spawnEnv: NodeJS.ProcessEnv = { ...nodeEnv };
+  if (launcherExe) {
+    spawnEnv.DSH_LAUNCHER_EXE = launcherExe;
+    spawnEnv.DSH_LAUNCHER_PID = String(process.pid);
+    spawnEnv.DSH_LAUNCHER_CONNECTION = effective.id;
+  }
+
   await new Promise<void>((resolve, reject) => {
     // 显式传 --port：dsh web 监听 launcher.json 配置的端口（而非 dsh 自己的默认值）；
     // 传 --no-open：浏览器由 launcher 统一控制打开，避免 dsh 自开一次 + launcher 再开一次。
     const args = [bin, 'web', '--port', String(lcfg.port), '--no-open'];
     const cp = spawn(nodeCmd, args, {
-      env: nodeEnv,
+      env: spawnEnv,
       // 不 detached：作为本进程子进程，继承（隐藏）控制台。
       // stdio 指向日志文件（无控制台时绝不能继承无效句柄）。
       stdio: ['ignore', childLog, childLog],
@@ -335,6 +346,9 @@ export async function start(cfg: Config, noBrowser: boolean, conn?: connections.
       activeLocalPort = lcfg.port;
       if (cp.pid) connections.writePortLock(lcfg.port, cp.pid);
       cp.once('exit', () => connections.clearPortLock(lcfg.port));
+      // M6:注册 + 心跳(spawn 成功后)
+      registration.registerLauncher(lcfg.dshInstallDir, { pid: cp.pid, running: true });
+      registration.startHeartbeat(() => ({ pid: child?.pid, running: !!child && !child.killed }));
       log.info(`dsh 子进程已启动（PID ${cp.pid}）：node ${args.join(' ')}`);
       resolve();
     });
@@ -388,6 +402,7 @@ export async function stop(cfg: Config, conn?: connections.Connection): Promise<
     child = null;
     connections.clearPortLock(port);
     activeLocalPort = undefined;
+    registration.unregisterLauncher();
     return;
   }
   // 回退：按端口定位（例如上次启动器异常退出遗留的独立进程）
@@ -404,6 +419,37 @@ export async function stop(cfg: Config, conn?: connections.Connection): Promise<
     }
   }
   connections.clearPortLock(port);
+  registration.unregisterLauncher();
+}
+
+/**
+ * M6 重启：优雅 stop → 等端口释放 → start（重抓 token 并照写 launch-token.json，
+ * 30 天 cookie 机制下重启后免手动重登）；remote 连接 = 重连/重开浏览器，不重启远端。
+ */
+export async function restartActive(): Promise<void> {
+  const cfg = config.load();
+  if (!cfg || !config.isInstalled(cfg)) {
+    throw new Error('未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装');
+  }
+  const { conn } = connections.resolveActive(cfg);
+  if (conn.kind === 'remote') {
+    log.info(`restart：remote 连接 ${conn.id} → 重连/重开浏览器（不重启远端）`);
+    await startRemote(conn);
+    return;
+  }
+  const lcfg: Config = conn.port && conn.port !== cfg.port ? { ...cfg, port: conn.port } : cfg;
+  log.info('restart：优雅停止 → 等待端口释放 → 重新启动……');
+  try {
+    await stop(lcfg, conn);
+  } catch (e) {
+    log.warn(`restart：stop 阶段（${(e as Error).message}），继续启动`);
+  }
+  for (let i = 0; i < 40; i++) {
+    if (!(await isRunning(lcfg))) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  await start(lcfg, false, conn);
+  log.info('restart 完成（token 已重抓并照写 launch-token.json）。');
 }
 
 /** 启动器退出时调用：静默结束子进程（不抛错）。退出钩子里不能异步，用同步 taskkill。 */
@@ -414,6 +460,7 @@ export function stopChildSilently(): void {
     connections.clearPortLock(activeLocalPort);
     activeLocalPort = undefined;
   }
+  registration.unregisterLauncher();
   if (!pid) return;
   // 退出即停服务：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
   clearLaunchToken('dsh-launcher', pid);

@@ -70,6 +70,7 @@ const mock = {
     };
   },
   async useConnection(id) { await delay(300); return { ok: true, active: id }; },
+  async restartDsh() { await delay(600); return { ok: true }; },
 };
 
 const bridge = window.launcherBridge || mock;
@@ -213,6 +214,7 @@ function renderButtons() {
   start.textContent = state.running ? '已运行' : '启动';
   start.disabled = state.busy;
   $('btnStop').disabled = state.busy || !state.running;
+  $('btnRestart').disabled = state.busy;
   $('btnInstall').disabled = state.busy;
   $('btnMove').disabled = state.busy;
   $('btnBrowse').disabled = state.busy;
@@ -544,6 +546,30 @@ async function onConnUse() {
   await refreshStatus();
 }
 
+function onHide() {
+  // M6:标题栏 × = 隐藏到托盘(dsh 继续跑;真正退出走「退出」按钮或托盘菜单)
+  if (window.electronWindow && window.electronWindow.hide) {
+    window.electronWindow.hide();
+    return;
+  }
+  log('浏览器/SEA 版无托盘：如需停止 dsh 请用「退出」。', 'dim');
+}
+
+async function onRestart() {
+  if (state.busy) return;
+  setBusy(true);
+  log('重启 dsh（优雅停止 → 等端口释放 → 重抓 token 照写）…', 'brand');
+  try {
+    const r = await bridge.restartDsh();
+    if (!r || r.ok === false) throw new Error((r && r.message) || '重启失败');
+    log('重启已开始（进度见日志；30 天 cookie 下重启后免手动重登）。', 'ok');
+  } catch (e) {
+    log('重启失败：' + e.message, 'err');
+  }
+  setBusy(false);
+  setTimeout(() => { void refreshStatus(); }, 4000);
+}
+
 function onExit() {
   log('dsh 绑定启动器运行：退出将同时停止 dsh。', 'dim');
   // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit → 停止 dsh）
@@ -577,13 +603,14 @@ function onExit() {
   // 先挂按钮，保证界面立即可用：状态请求失败也不阻塞交互
   $('btnStart').addEventListener('click', onStart);
   $('btnStop').addEventListener('click', onStop);
+  $('btnRestart').addEventListener('click', onRestart);
   $('btnInstall').addEventListener('click', onInstall);
   $('btnMove').addEventListener('click', onMove);
   $('btnBrowse').addEventListener('click', onBrowse);
   $('btnUpdate').addEventListener('click', onUpdate);
   $('btnRefreshTags').addEventListener('click', refreshTags);
   $('btnExit').addEventListener('click', onExit);
-  $('btnClose').addEventListener('click', onExit);
+  $('btnClose').addEventListener('click', onHide);
   $('btnEcoRefresh').addEventListener('click', refreshEcosystem);
   $('btnEcoDry').addEventListener('click', () => onEcoPull(true));
   $('btnEcoPull').addEventListener('click', () => onEcoPull(false));

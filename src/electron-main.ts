@@ -1,15 +1,24 @@
 // electron-main.ts —— Electron 桌面窗口入口。
 // 无参数（双击 exe）→ 启动本地 UI 服务 + 打开桌面窗口（frameless，加载 http://127.0.0.1:<port>/）。
-// 带 CLI 参数 → 与命令行版一致（install/start/stop/move/status/check-update）。
+// 带 CLI 参数 → 与命令行版一致（install/start/stop/restart/move/status/check-update/connections/profile/pull）。
+// M6:托盘常驻(启停/重启/开浏览器/连接切换/检查更新/退出)、关窗=隐藏到托盘(默认,launcher.json
+// closeAction:'exit' 保留旧「关窗即停」)。
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
 import { dirname, join } from 'node:path';
 
 import { dispatch } from './cli.js';
+import * as config from './config.js';
+import * as connections from './connections.js';
 import * as consoleWin from './console.js';
 import * as launch from './launch.js';
 import * as log from './log.js';
-import { DefaultUIPort, startServer } from './server.js';
+import * as registration from './registration.js';
+import { DefaultUIPort, lastUpdateState, startServer } from './server.js';
+import { trayPng, type TrayState } from './trayIcon.js';
+import { readLaunchToken } from './tokenFile.js';
+import * as update from './update.js';
+import { VERSION } from './version.js';
 
 // esbuild 以 CJS 输出：__dirname 是真实模块目录变量（避免 import.meta.url 在 asar 下失效）
 declare const __dirname: string;
@@ -17,9 +26,13 @@ declare const __dirname: string;
 // ---------- CLI 命令集合 ----------
 
 const KNOWN_COMMANDS = new Set([
-  'install', 'start', 'stop', 'move', 'status', 'check-update', 'ui',
+  'install', 'start', 'stop', 'restart', 'move', 'status', 'check-update', 'ui',
+  'connections', 'profile', 'pull',
   '--help', '-h', 'help', '--version', '-v',
 ]);
+
+/** 退出语义标志：true 时关闭窗口 = 真退出（UI「退出」按钮 / 托盘退出）。 */
+let quitting = false;
 
 /** 清洗 argv：去掉 exe 路径、可能的 app 路径（dev 模式 `electron .`）与 Chromium 开关。 */
 function cleanArgs(raw: string[]): string[] {
@@ -46,7 +59,9 @@ async function runDesktop(): Promise<void> {
 
   // 启动器常驻：关闭窗口/退出时自动停止 dsh 子进程
   app.on('before-quit', () => {
+    quitting = true;
     launch.stopChildSilently();
+    registration.unregisterLauncher();
   });
   process.on('exit', () => {
     launch.stopChildSilently();
@@ -106,15 +121,197 @@ async function runDesktop(): Promise<void> {
   // 兜底：若 ready-to-show 已错过（页面早已渲染完成），直接显示。
   if (!win.isVisible()) win.show();
 
+  // M6:关窗 = 隐藏到托盘（默认；launcher.json closeAction:'exit' 保留旧行为）
+  win.on('close', (e) => {
+    if (quitting) return;
+    const c = config.load();
+    if ((c?.closeAction ?? 'tray') === 'tray') {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+
   win.on('closed', () => app.quit());
+
+  // ---------- 托盘（M6） ----------
+
+  const notify = (title: string, body: string): void => {
+    try {
+      if (Notification.isSupported()) new Notification({ title, body }).show();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+  const openActiveBrowser = async (): Promise<void> => {
+    const cfg = config.load();
+    if (!cfg || !config.isInstalled(cfg)) {
+      notify('dsh-launcher', 'dsh 未安装：请先运行 install');
+      return;
+    }
+    const { conn } = connections.resolveActive(cfg);
+    if (conn.kind === 'remote') {
+      await shell.openExternal(connections.buildRemoteTarget(conn));
+      return;
+    }
+    const port = conn.port ?? cfg.port;
+    const shared = readLaunchToken();
+    const target = shared && shared.port === port && shared.url ? shared.url : `http://127.0.0.1:${port}/`;
+    await shell.openExternal(target);
+  };
+
+  const trayState = async (): Promise<TrayState> => {
+    const cfg = config.load();
+    if (!cfg || !config.isInstalled(cfg)) return 'dim';
+    const { conn } = connections.resolveActive(cfg);
+    if (conn.kind === 'remote') {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 1500);
+        try {
+          const r = await fetch(conn.url ?? '', { signal: ctrl.signal });
+          r.body?.cancel().catch(() => {});
+          return r.status >= 200 ? 'green' : 'dim';
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch {
+        return 'dim';
+      }
+    }
+    const lcfg = conn.port && conn.port !== cfg.port ? { ...cfg, port: conn.port } : cfg;
+    if (await launch.isRunning(lcfg)) {
+      const us = lastUpdateState();
+      return us.dshAvail || us.launcherAvail ? 'yellow' : 'green';
+    }
+    return 'dim';
+  };
+
+  const tray = new Tray(nativeImage.createFromBuffer(trayPng('dim')));
+  const rebuildTray = async (): Promise<void> => {
+    try {
+      const cfg = config.load();
+      const installed = !!cfg && config.isInstalled(cfg);
+      const { conn: active } = connections.resolveActive(cfg);
+      const st = await trayState();
+      tray.setImage(nativeImage.createFromBuffer(trayPng(st)));
+      const tip =
+        st === 'green' ? 'dsh 运行中' : st === 'yellow' ? 'dsh 运行中（有更新）' : st === 'red' ? 'dsh 异常' : 'dsh 未运行';
+      tray.setToolTip(`dsh-launcher v${VERSION} — ${tip}`);
+      const connItems = connections.listConnections(cfg).map((c) => ({
+        label: `${c.id === active.id ? '● ' : '○ '}${c.id}（${c.kind}${c.kind === 'local' && c.port ? ':' + c.port : ''}）`,
+        click: () => {
+          void (async () => {
+            try {
+              connections.useConnection(c.id);
+              await launch.restartActive();
+              notify('连接已切换', c.id);
+            } catch (e) {
+              notify('切换连接失败', errText(e));
+            }
+            void rebuildTray();
+          })();
+        },
+      }));
+      const wrap = (fn: () => Promise<void>, okTitle: string): { click: () => void } => ({
+        click: () => {
+          void (async () => {
+            try {
+              await fn();
+              notify(okTitle, '激活连接：' + connections.resolveActive(config.load()).conn.id);
+            } catch (e) {
+              notify('操作失败', errText(e));
+            }
+            void rebuildTray();
+          })();
+        },
+      });
+      tray.setContextMenu(
+        Menu.buildFromTemplate([
+          { label: '显示窗口', click: () => { win.show(); win.focus(); } },
+          { type: 'separator' },
+          {
+            label: '启动 dsh',
+            enabled: installed,
+            ...wrap(async () => {
+              const c2 = config.load();
+              if (!c2 || !config.isInstalled(c2)) throw new Error('dsh 未安装');
+              const { conn: cn } = connections.resolveActive(c2);
+              await launch.start(c2, false, cn);
+            }, 'dsh 已启动'),
+          },
+          {
+            label: '停止 dsh',
+            enabled: installed,
+            ...wrap(async () => {
+              const c2 = config.load();
+              if (!c2) throw new Error('dsh 未安装');
+              await launch.stop(c2);
+            }, 'dsh 已停止'),
+          },
+          {
+            label: '重启 dsh',
+            enabled: installed,
+            ...wrap(() => launch.restartActive(), 'dsh 已重启'),
+          },
+          { label: '打开浏览器（激活连接）', enabled: installed, click: () => { void openActiveBrowser().finally(() => void rebuildTray()); } },
+          { label: '连接切换', submenu: connItems },
+          { type: 'separator' },
+          {
+            label: '检查更新',
+            click: () => {
+              void (async () => {
+                try {
+                  const cfg2 = config.load();
+                  const d = cfg2?.dshVersion
+                    ? await update.checkDsh(cfg2.dshVersion, {}, { source: cfg2.source, proxy: cfg2.proxy }).catch(() => ({ hasUpdate: false, latest: '' }))
+                    : { hasUpdate: false, latest: '' };
+                  const la = await update.checkLauncher(VERSION).catch(() => ({ hasUpdate: false, latest: '' }));
+                  const parts: string[] = [];
+                  if (d.hasUpdate) parts.push('dsh → ' + d.latest);
+                  if (la.hasUpdate) parts.push('启动器 → ' + la.latest);
+                  notify(parts.length > 0 ? '发现新版本' : '已是最新', parts.join('；') || 'dsh 与启动器均最新');
+                } finally {
+                  void rebuildTray();
+                }
+              })();
+            },
+          },
+          { type: 'separator' },
+          {
+            label: '退出（停止 dsh）',
+            click: () => {
+              quitting = true;
+              tray.destroy();
+              app.quit();
+            },
+          },
+        ]),
+      );
+    } catch (e) {
+      log.warn(`托盘菜单刷新失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  void rebuildTray();
+  const trayTimer = setInterval(() => void rebuildTray(), 15_000);
+  app.on('before-quit', () => clearInterval(trayTimer));
 }
 
-/** 窗口控制 IPC（最小化等），供 preload 使用。 */
+/** 窗口控制 IPC（最小化/隐藏/关闭），供 preload 使用。 */
 ipcMain.on('win:minimize', (e) => {
   BrowserWindow.fromWebContents(e.sender)?.minimize();
 });
 
+ipcMain.on('win:hide', (e) => {
+  // M6:标题栏 × = 隐藏到托盘(dsh 继续跑)
+  BrowserWindow.fromWebContents(e.sender)?.hide();
+});
+
 ipcMain.on('win:close', (e) => {
+  // UI「退出」按钮:真退出(before-quit 停止 dsh)
+  quitting = true;
   BrowserWindow.fromWebContents(e.sender)?.close();
 });
 

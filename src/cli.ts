@@ -9,6 +9,7 @@ import * as launch from './launch.js';
 import * as log from './log.js';
 import * as node from './node.js';
 import * as profile from './profile.js';
+import * as registration from './registration.js';
 import { DefaultUIPort, startServer } from './server.js';
 import * as update from './update.js';
 import { VERSION } from './version.js';
@@ -34,6 +35,8 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
                                     （跨盘自动复制+删除，运行中禁止）
   dsh-launcher.exe start [--no-browser]  启动 dsh 并保持本进程常驻（dsh 绑定启动器）
   dsh-launcher.exe stop             停止 dsh（结束绑定子进程，或按配置端口回退）
+  dsh-launcher.exe restart          重启 dsh（优雅停止→重抓 token 照写；运行中的 launcher
+                                    经 REST bridge 转交；remote 连接=重连/重开浏览器）
   dsh-launcher.exe status           显示安装目录、版本与运行状态
   dsh-launcher.exe check-update     检查升级：dsh（GitHub tag / npm registry）与启动器（GitHub Release）
   dsh-launcher.exe pull [--manifest <url|file>] [--plugins a,b] [--all] [--no-core] [--no-skills] [--dry-run]
@@ -247,6 +250,33 @@ async function runStatus(): Promise<void> {
 }
 
 /** connections 子命令（M5）：list|add|use|remove。 */
+/** M6 restart:优先单实例转交(注册新鲜 + pid 存活 + api 健康 → REST bridge),否则本机执行。 */
+async function runRestart(): Promise<void> {
+  const reg = registration.readRegistration();
+  if (reg && registration.isFresh(reg) && reg.pid && connections.pidAlive(reg.pid) && reg.api && reg.bridgeKey) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      try {
+        const resp = await fetch(
+          `${reg.api}/api/dsh/restart?key=${encodeURIComponent(reg.bridgeKey)}`,
+          { method: 'POST', signal: ctrl.signal },
+        );
+        if (resp.status === 202) {
+          log.info(`restart 已转交运行中的 launcher（${reg.api}），进度见其日志。`);
+          return;
+        }
+        log.warn(`REST bridge 返回 ${resp.status}，改为本机执行 restart……`);
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      log.warn('REST bridge 不可达，改为本机执行 restart……');
+    }
+  }
+  await launch.restartActive();
+}
+
 async function runConnections(rest: string[]): Promise<void> {
   const sub = rest[0];
   const args = rest.slice(1);
@@ -501,6 +531,9 @@ export async function dispatch(args: string[]): Promise<void> {
       return;
     case 'stop':
       await runStop();
+      return;
+    case 'restart':
+      await runRestart();
       return;
     case 'status':
       await runStatus();
