@@ -5,6 +5,8 @@ import { openSync, writeSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { redactTokenUrl } from './tokenFile.js';
+
 const subscribers: Array<(line: string) => void> = [];
 let logFile: number | null = null;
 let debugEnabled = false;
@@ -62,7 +64,8 @@ function ts(): string {
 }
 
 function emit(level: string, msg: string): void {
-  const full = `${ts()} [${level}] ${msg}\n`;
+  // M0/P1-6 日志脱敏:输出前统一替换 token 值(控制台/文件/UI 订阅者同源生效)
+  const full = `${ts()} [${level}] ${redactTokenUrl(msg)}\n`;
   try {
     process.stdout.write(full);
   } catch {

@@ -12,6 +12,11 @@ import { dirname, join } from 'node:path';
 export const LAUNCH_TOKEN_FILE = 'launch-token.json';
 export const LAUNCH_TOKEN_VERSION = 1;
 
+/** 日志脱敏（M0/P1-6）:把文本里 `?token=…` / `&token=…` 的 token 值替换为 `***`,用于打印/记录带 token 的地址。 */
+export function redactTokenUrl(text: string): string {
+  return text.replace(/([?&]token=)[A-Za-z0-9_-]+/g, '$1***');
+}
+
 export type LaunchTokenSource = 'dsh-launcher' | 'dsh-vscode';
 
 export interface LaunchTokenRecord {
@@ -90,17 +95,53 @@ export function writeLaunchToken(record: Omit<LaunchTokenRecord, 'version' | 'wr
 }
 
 /**
- * 清理共享 token 文件。仅当文件记录的 pid 与给定 pid 一致（或记录无 pid）时删除，
- * 避免误删另一应用（vscode 插件）维护的记录。
+ * 清理共享 token 文件（M0 / 决策 D8 原子化，修 P0-4 竞态）。
+ *
+ * 仅在文件记录与调用方「归属」匹配时删除:
+ *   - source 必须一致（launcher 不清 vscode 维护的记录，反之亦然）;
+ *   - 记录带 pid 时，pid 必须与调用方持有的子进程 pid 一致
+ *     （同 source 的旧实例/其他实例记录不可误删）;
+ *   - 记录无 pid（旧版写入）时按 source 归属判断;
+ *   - 调用方未知 pid 时，只清「无 pid 的旧版记录」，pid 明确的记录不碰。
+ *
+ * 删除前**复读确认**:read → 归属判断 → 再次 read → 两次内容一致才 rmSync。
+ * 收窄「读到旧记录后、删除前文件被另一监督者改写」的 TOCTOU 窗口
+ * （读 A 认定归属 → vscode/新进程改写了文件 → 误删新记录）:
+ * 复读发现文件已被改写为其他内容/归属即放弃删除，重试至多 3 次
+ * —— 宁可残留陈旧记录（读取方有 401 自检/兜底），不可误删他人 token。
+ *
+ * @param source 调用方来源（dsh-launcher / dsh-vscode）。
+ * @param pid    调用方持有的 dsh 子进程 PID（可选;记录带 pid 时必须匹配）。
  */
-export function clearLaunchToken(pid?: number): void {
-  if (pid === undefined) return;
-  const record = readLaunchToken();
-  if (record === undefined) return;
-  if (record.pid !== undefined && record.pid !== pid) return;
-  try {
-    rmSync(launchTokenFilePath(), { force: true });
-  } catch {
-    // ignore
+export function clearLaunchToken(source: LaunchTokenSource, pid?: number): void {
+  const path = launchTokenFilePath();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const record = readLaunchToken();
+    if (record === undefined) return; // 无文件 / 损坏 / 版本不符:无事可做
+    if (!recordOwnedBy(record, source, pid)) return; // 不属于调用方:不动
+    // 删除前复读确认:两次读取之间文件被改写 → 放弃本次，重试
+    const reread = readLaunchToken();
+    if (reread === undefined) return; // 已被并发清理
+    if (
+      reread.source !== record.source ||
+      reread.pid !== record.pid ||
+      reread.token !== record.token ||
+      reread.writtenAt !== record.writtenAt
+    ) {
+      continue; // 被其他监督者改写，重读后再判归属
+    }
+    try {
+      rmSync(path, { force: true });
+      return;
+    } catch {
+      return; // 删除失败不致命，交由下次启动清理
+    }
   }
+}
+
+/** 归属判断:source 必须一致;pid 匹配规则见 clearLaunchToken 注释。 */
+function recordOwnedBy(record: LaunchTokenRecord, source: LaunchTokenSource, pid?: number): boolean {
+  if (record.source !== source) return false;
+  if (record.pid === undefined) return true; // 旧版无 pid 记录:按 source 归属
+  return pid !== undefined && record.pid === pid;
 }
