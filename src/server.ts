@@ -7,6 +7,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +25,7 @@ import * as install from './install.js';
 import * as launch from './launch.js';
 import * as log from './log.js';
 import * as node from './node.js';
+import * as registration from './registration.js';
 import * as update from './update.js';
 import { VERSION } from './version.js';
 
@@ -50,6 +52,17 @@ const updateState: UpdateState = {
 
 /** 生态拉齐是否正在执行（防并发触发；GET /api/ecosystem 暴露给前端）。 */
 let ecoPullBusy = false;
+
+/** M6:REST bridge 随机共享密钥(每次进程启动生成;经 launcher-registration.json 0600 分发)。 */
+const bridgeKey = randomBytes(16).toString('hex');
+
+/** restart 是否进行中(防并发)。 */
+let restartBusy = false;
+
+/** 托盘图标状态用：最近一次升级检测结果（M6 黄色=有更新）。 */
+export function lastUpdateState(): { dshAvail: boolean; launcherAvail: boolean } {
+  return { dshAvail: updateState.dshAvail, launcherAvail: updateState.launcherAvail };
+}
 
 // ---------- 桥接注入脚本（替换 window.launcherBridge 为真实 API） ----------
 
@@ -79,6 +92,7 @@ const bridgeScript = `<script>
     pullEcosystem: function (opts) { return api('/api/ecosystem/pull', opts || {}); },
     getConnections: function () { return api('/api/connections'); },
     useConnection: function (id) { return api('/api/connections/use', { id: id }); },
+    restartDsh: function () { return api('/api/dsh/restart?key=${bridgeKey}', {}); },
     defaultDir: ${JSON.stringify(defaultInstallDir())},
   };
   var es = new EventSource('/api/events');
@@ -523,6 +537,33 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
       json(res, 200, { dir });
       return;
     }
+    case '/api/dsh/restart': {
+      // M6 重启 seam:仅绑 127.0.0.1 + 随机共享密钥(经 launcher-registration.json 0600 分发给 dsh 侧/CLI)
+      const u2 = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (u2.searchParams.get('key') !== bridgeKey) {
+        log.warn('restart 拒绝：bridgeKey 校验失败');
+        json(res, 403, { ok: false, message: 'bridgeKey 校验失败' });
+        return;
+      }
+      if (restartBusy) {
+        json(res, 409, { ok: false, message: 'restart 进行中' });
+        return;
+      }
+      restartBusy = true;
+      json(res, 202, { ok: true, message: 'restart 已开始（进度见日志）' });
+      void (async () => {
+        try {
+          log.info('restart（REST bridge 触发）……');
+          await launch.restartActive();
+          log.info('restart 完成。');
+        } catch (e) {
+          log.error(`restart 失败：${errMessage(e)}`);
+        } finally {
+          restartBusy = false;
+        }
+      })();
+      return;
+    }
     case '/api/exit': {
       json(res, 200, { ok: true });
       // 退出前停止绑定的 dsh 子进程（启动器常驻 = dsh 随启动器停）
@@ -561,6 +602,8 @@ export function startServer(port: number): Promise<{ port: number; url: string }
       const addr = server.address();
       const actualPort = typeof addr === 'object' && addr ? addr.port : port;
       log.info(`launcher UI 服务已启动：http://127.0.0.1:${actualPort}/`);
+      // M6:把 api/bridgeKey 补写进 launcher-registration.json(0600;dsh 侧/CLI restart 经此发现)
+      registration.setBridge(`http://127.0.0.1:${actualPort}`, bridgeKey);
       resolve({ port: actualPort, url: `http://127.0.0.1:${actualPort}/` });
     });
   });

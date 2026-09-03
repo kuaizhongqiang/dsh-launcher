@@ -34,6 +34,8 @@ export interface LaunchTokenRecord {
   writtenAt: string;
   /** 写入方：dsh-launcher / dsh-vscode。 */
   source: LaunchTokenSource;
+  /** M6 重启 seam（可选）：由 launcher 写入时标记管理方；读取方忽略未知字段，向后兼容。 */
+  managedBy?: 'dsh-launcher';
 }
 
 /** DSH_HOME 解析（与 dsh-vscode 的 dshHome 同一规则）。 */
