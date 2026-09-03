@@ -23,6 +23,10 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
                                      安装 dsh（默认 source=github：克隆
                                      deepseek-ai/deepseek-harness + pnpm 构建，
                                      锁定最新 dsh tag；--version 指定 tag）
+  dsh-launcher.exe install --offline <目录> [--dir <安装目录>]
+                                     离线包安装（M3）：offline/dsh（npm/github 布局自动识别）
+                                     + offline/runtime（便携 Node，可选）本地直装，
+                                     不依赖网络 / git / pnpm
                                      默认安装目录 %LOCALAPPDATA%\\dsh
   dsh-launcher.exe move --dir <目录> 把已安装的 dsh 挪到新路径
                                     （跨盘自动复制+删除，运行中禁止）
@@ -64,6 +68,7 @@ interface InstallArgs {
   source: node.DshSource;
   version: string;
   proxy: string;
+  offlineDir: string;
 }
 
 /** 解析 install 子命令参数。 */
@@ -73,8 +78,10 @@ function parseInstallArgs(rest: string[]): InstallArgs {
   let source: node.DshSource = 'github';
   let version = '';
   let proxy = '';
+  let offlineDir = '';
   for (let i = 0; i < rest.length; i++) {
-    switch (rest[i]) {
+    const t = rest[i];
+    switch (t) {
       case '--dir':
       case '-d':
         if (i + 1 >= rest.length) fail('--dir 缺少参数');
@@ -96,6 +103,10 @@ function parseInstallArgs(rest: string[]): InstallArgs {
         if (i + 1 >= rest.length) fail('--proxy 缺少参数');
         proxy = rest[++i];
         break;
+      case '--offline':
+        if (i + 1 >= rest.length) fail('--offline 缺少参数');
+        offlineDir = rest[++i];
+        break;
       case '--registry':
         if (i + 1 >= rest.length) fail('--registry 缺少参数');
         spec.registry = rest[++i];
@@ -110,7 +121,7 @@ function parseInstallArgs(rest: string[]): InstallArgs {
         fail(`install 未知参数：${rest[i]}`);
     }
   }
-  return { dir, spec, source, version, proxy };
+  return { dir, spec, source, version, proxy, offlineDir };
 }
 
 /** 解析 move 子命令参数。 */
@@ -129,8 +140,8 @@ function parseMoveArgs(rest: string[]): string {
 }
 
 async function runInstall(rest: string[]): Promise<void> {
-  const { dir, spec, source, version, proxy } = parseInstallArgs(rest);
-  await install.run(dir, install.registrySpecFromEnv(spec), { source, version, proxy });
+  const { dir, spec, source, version, proxy, offlineDir } = parseInstallArgs(rest);
+  await install.run(dir, install.registrySpecFromEnv(spec), { source, version, proxy, offlineDir: offlineDir || undefined });
   log.info('安装完成。现在可以运行 dsh-launcher.exe（或 dsh-launcher.exe start）启动 dsh。');
 }
 
