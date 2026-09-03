@@ -102,8 +102,8 @@ async function main() {
   try {
     const { manifest, label } = await eco.loadManifest();
     ok(label.includes('默认'), '1-1 默认清单来源 = 内嵌');
-    ok(manifest.plugins.packages.length === 11, '1-2 默认清单含 11 个插件包');
-    ok(manifest.plugins.source.commit === '15ffcfd77d391d6ba5fed8dc6285e6bb5ff0f72c', '1-3 插件源锁 15ffcfd');
+    ok(manifest.plugins.packages.length === 7, '1-2 默认清单含 7 个插件包(11→7)');
+    ok(manifest.plugins.source.commit === '9f472797785a70cf78de0042f98e01d05ef927cb', '1-3 插件源锁 9f47279');
     ok(!!manifest.skills?.sha256, '1-4 skills 声明 sha256');
   } catch (e) {
     ok(false, `1-x 默认清单加载异常:${e.message}`);

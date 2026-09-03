@@ -76,10 +76,10 @@ async function main() {
     console.log('1. GET /api/ecosystem（无状态）');
     const g1 = await getJson(base + '/api/ecosystem');
     ok(g1.status === 200 && g1.json?.ok === true, '1-1 /api/ecosystem 200 ok');
-    ok(Array.isArray(g1.json?.manifest?.packages) && g1.json.manifest.packages.length === 11, '1-2 默认清单 11 包');
+    ok(Array.isArray(g1.json?.manifest?.packages) && g1.json.manifest.packages.length === 7, '1-2 默认清单 7 包(11→7)');
     ok(g1.json.manifest.skills === true && !!g1.json.label, '1-3 skills=true 且带 label');
     ok(g1.json.state === null, '1-4 无状态时 state=null');
-    ok(g1.json.manifest.pluginsCommit === '15ffcfd77d391d6ba5fed8dc6285e6bb5ff0f72c', '1-5 插件源锁 15ffcfd');
+    ok(g1.json.manifest.pluginsCommit === '9f472797785a70cf78de0042f98e01d05ef927cb', '1-5 插件源锁 9f47279');
     ok(typeof g1.json.pluginsDir === 'string' && g1.json.pluginsDir.endsWith('dsh-plugins'), '1-6 pluginsDir 默认 launcher 旁');
 
     console.log('2. GET /api/ecosystem（有状态）');

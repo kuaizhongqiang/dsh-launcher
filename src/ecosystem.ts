@@ -101,25 +101,19 @@ export interface PullOptions {
 
 // ---------------------------------------------------------------- 默认清单
 
-const sha = {
-  'audio-read': '8a7492b61b2500ed91a1bbe1f2e4a6118c27bce3dc1dab51b7bdd214040576c8',
-  'audio-speak': '00f1d463c43f302a6daa54c02d8345ee60be7e1c060d60ed10dd72d94380c627',
-  credentials: 'e4d183d676ee2c2e5e6e9cd2bbb85cd37ec77171588ff4226cd60d7e7563214b',
-  'deepseek-balance': '238e8f515221d67c955ccdf4d5a344c0549bb04701188758fe50380711b04730',
-  'deepseek-recharge': '7a86c60a23d805032ae42d53c998ed8d3506efdd2c0b2527634841f7228b2ecf',
-  'describe-image': 'dda9bc1a6d8af3b3d71a0ca8ab6f9380671927747faf3f48cda54dbaafad2e3d',
-  'document-read': 'bd86ca28a74c898b0299487d66e7ec91a468aa8ed72bb9cf8b999f720d7e1962',
-  github: 'd69340d34628549cb793fc7600632ceeabdf23f1a3fed09bafb6b0afe0414254',
-  stock: 'e20fed7cac47e4bb4d976dbc752d5c6dd735fc94c215c4920425ba7fe4731a89',
-  'unity-mcp': 'e76e308719dd22c804276e48584c6d5b3c16ce5a2c5a205f3b598165576e02a5',
-  'video-read': '5c6ee57203857ced694f96e706564902ab4072aaf968191b5468f31bc5eb8ac2',
-};
-
-const packageDirs: Record<string, string> = {};
-for (const id of Object.keys(sha)) packageDirs[id] = `plugins/${id}-dsh-plugin`;
+/** 新集合 7 包(PM4 / §8 11→7):id、包目录、install.ps1 sha256。 */
+const PACKAGES: Array<{ id: string; dir: string; installPs1: string }> = [
+  { id: 'dsh-media', dir: 'plugins/dsh-media-dsh-plugin', installPs1: 'e68cef3631761e1dc0c49c18421b716524b7584d979911ac1887a427bcbbfdd9' },
+  { id: 'dsh-deepseek', dir: 'plugins/dsh-deepseek-dsh-plugin', installPs1: 'c2877f16d912dc980fa0dd1a509ceb6356d42a2f77e230514070ad0abe7f09b8' },
+  { id: 'dsh-credentials', dir: 'plugins/credentials-dsh-plugin', installPs1: 'e4d183d676ee2c2e5e6e9cd2bbb85cd37ec77171588ff4226cd60d7e7563214b' },
+  { id: 'dsh-github', dir: 'plugins/github-dsh-plugin', installPs1: 'd69340d34628549cb793fc7600632ceeabdf23f1a3fed09bafb6b0afe0414254' },
+  { id: 'dsh-stock', dir: 'plugins/stock-dsh-plugin', installPs1: 'e20fed7cac47e4bb4d976dbc752d5c6dd735fc94c215c4920425ba7fe4731a89' },
+  { id: 'dsh-unity', dir: 'plugins/unity-mcp-dsh-plugin', installPs1: 'e76e308719dd22c804276e48584c6d5b3c16ce5a2c5a205f3b598165576e02a5' },
+  { id: 'dsh-launcher', dir: 'plugins/dsh-launcher-dsh-plugin', installPs1: '044fefb6b5e720215e9a7f1f1a2a2bf14a4cb1c2904fad94cd2c67a04c34e03c' },
+];
 
 /**
- * 默认清单（内嵌，随启动器走）：与当前 dsh-plugins 锁点 15ffcfd 对齐。
+ * 默认清单（内嵌，随启动器走）：与 dsh-plugins 锁点 9f47279（新集合 11→7）对齐。
  * 更新流程：在 dsh-plugins 新 commit 上重算各 install.ps1 sha256 → 同步本对象与仓库根 ecosystem.json。
  */
 export const DEFAULT_ECOSYSTEM: EcosystemManifest = {
@@ -128,12 +122,12 @@ export const DEFAULT_ECOSYSTEM: EcosystemManifest = {
   plugins: {
     source: {
       repo: 'https://github.com/kuaizhongqiang/dsh-plugins.git',
-      commit: '15ffcfd77d391d6ba5fed8dc6285e6bb5ff0f72c',
+      commit: '9f472797785a70cf78de0042f98e01d05ef927cb',
     },
-    packages: Object.entries(sha).map(([id, installSha]) => ({
-      id,
-      dir: packageDirs[id],
-      sha256: { 'install.ps1': installSha },
+    packages: PACKAGES.map((p) => ({
+      id: p.id,
+      dir: p.dir,
+      sha256: { 'install.ps1': p.installPs1 },
     })),
   },
   skills: {
