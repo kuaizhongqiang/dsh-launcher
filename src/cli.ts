@@ -2,6 +2,7 @@
 // 移植自 Go main.go。无参数（双击 exe）→ 启动 Web UI 并打开浏览器。
 
 import * as config from './config.js';
+import * as connections from './connections.js';
 import * as ecosystem from './ecosystem.js';
 import * as install from './install.js';
 import * as launch from './launch.js';
@@ -47,6 +48,13 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
   dsh-launcher.exe profile import --in <文件> [--password <口令>]
                                     导出/导入加密个人层（AES-256-GCM + scrypt；口令默认取
                                     环境变量 DSH_LAUNCHER_PROFILE_PASSWORD）
+  dsh-launcher.exe connections list|add|use|remove  多连接管理（M5）：
+                                    add --id <id> --kind local --port <p> [--name <n>]
+                                    add --id <id> --kind remote --url <u> [--token <t>] [--name <n>]
+                                    use <id> 切换激活（写 .dsh-connection-changed 标记）；remove <id> 删除
+                                    激活连接照写 launch-token.json（desktop 完全跟随 / vscode token 跟随）
+  dsh-launcher.exe start [--no-browser] [--connection <id>]  按（或指定）激活连接启动：
+                                    local=绑子进程启动（D8 端口锁）；remote=健康检查+带 token 开浏览器
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
   dsh-launcher.exe --version | -v   显示版本
   dsh-launcher.exe --help | -h      显示本帮助
@@ -161,11 +169,18 @@ async function runMove(rest: string[]): Promise<void> {
 
 async function runStart(rest: string[]): Promise<void> {
   const noBrowser = rest.includes('--no-browser');
+  const ci = rest.indexOf('--connection');
+  const connId = ci >= 0 && ci + 1 < rest.length ? rest[ci + 1] : undefined;
   const cfg = config.load();
   if (!cfg || !config.isInstalled(cfg)) {
     fail('未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装');
   }
-  await launch.start(cfg, noBrowser);
+  let conn: connections.Connection | undefined;
+  if (connId) {
+    conn = connections.listConnections(cfg).find((c) => c.id === connId);
+    if (!conn) fail(`连接不存在：${connId}（可用：${connections.listConnections(cfg).map((c) => c.id).join(', ')}）`);
+  }
+  await launch.start(cfg, noBrowser, conn);
   // dsh 绑定启动器：本进程保持常驻，退出时（electron-main 的 exit 钩子）自动停 dsh
   log.info('dsh 已绑定启动器运行（关闭本程序将同时停止 dsh）。Ctrl+C 可退出。');
   await new Promise<void>(() => {});
@@ -176,7 +191,12 @@ async function runStop(): Promise<void> {
   if (!cfg || !config.isInstalled(cfg)) {
     fail('未找到 launcher.json：请先运行 dsh-launcher.exe install 完成安装');
   }
-  await launch.stop(cfg);
+  const { conn } = connections.resolveActive(cfg);
+  if (conn.kind === 'remote') {
+    log.info(`激活连接 ${conn.id} 为 remote：本机 stop 不作用于远端实例。`);
+    return;
+  }
+  await launch.stop(cfg, conn);
   log.info('停止完成。');
 }
 
@@ -187,19 +207,104 @@ async function runStatus(): Promise<void> {
     console.log('请先运行：dsh-launcher.exe install');
     return;
   }
+  const { conn } = connections.resolveActive(cfg);
   console.log(`安装目录：${cfg.dshInstallDir}`);
   console.log(`dsh 版本：${cfg.dshVersion ?? '-'}`);
-  console.log(`端口：${cfg.port}`);
+  console.log(`激活连接：${conn.id}（${conn.kind}${conn.kind === 'remote' ? `，${conn.url ?? ''}` : `，端口 ${conn.port ?? cfg.port}`}）`);
   console.log(`安装时间：${cfg.installedAt ?? '-'}`);
 
-  if (!launch.installDirExists(cfg)) {
+  if (conn.kind === 'remote') {
+    let up = false;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      try {
+        const r = await fetch(conn.url ?? '', { signal: ctrl.signal });
+        up = r.status >= 200;
+        r.body?.cancel().catch(() => {});
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      up = false;
+    }
+    console.log(`运行状态：${up ? '可达' : '不可达'}（HTTP ping）`);
+    return;
+  }
+
+  // local：端口跟随连接
+  const eff = conn.port && conn.port !== cfg.port ? { ...cfg, port: conn.port } : cfg;
+  console.log(`端口：${eff.port}`);
+  if (!launch.installDirExists(eff)) {
     console.log('运行状态：未就绪（安装目录不存在，请重新 install）');
     return;
   }
-  if (await launch.isRunning(cfg)) {
-    console.log(`运行状态：运行中（端口 ${cfg.port} 有响应）`);
+  if (await launch.isRunning(eff)) {
+    console.log(`运行状态：运行中（端口 ${eff.port} 有响应）`);
   } else {
-    console.log(`运行状态：未运行（端口 ${cfg.port} 无响应）`);
+    console.log(`运行状态：未运行（端口 ${eff.port} 无响应）`);
+  }
+}
+
+/** connections 子命令（M5）：list|add|use|remove。 */
+async function runConnections(rest: string[]): Promise<void> {
+  const sub = rest[0];
+  const args = rest.slice(1);
+  const val = (flag: string, def = ''): string => {
+    const i = args.indexOf(flag);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : def;
+  };
+  const cfg = config.load();
+  switch (sub) {
+    case 'list': {
+      const { conn: active } = connections.resolveActive(cfg);
+      const fromFile = connections.loadConnections() !== undefined;
+      if (!fromFile) console.log('（尚无 connections.json：以下为按 launcher.json 合成的默认连接）');
+      for (const c of connections.listConnections(cfg)) {
+        const mark = c.id === active.id ? '*' : ' ';
+        const where = c.kind === 'local' ? `port=${c.port}` : `url=${c.url}${c.token ? ' (token 已配置)' : ' (无 token,交由外部认证)'}`;
+        console.log(`${mark} ${c.id}  [${c.kind}]  ${c.name ?? ''}  ${where}`);
+      }
+      return;
+    }
+    case 'add': {
+      const id = val('--id');
+      const kind = val('--kind') as connections.ConnectionKind;
+      const name = val('--name') || undefined;
+      const portStr = val('--port');
+      const url = val('--url') || undefined;
+      const token = val('--token') || undefined;
+      if (!id) fail('connections add 需要 --id <id>');
+      if (kind !== 'local' && kind !== 'remote') fail('connections add 需要 --kind local|remote');
+      if (kind === 'local') {
+        const port = Number(portStr);
+        if (!Number.isInteger(port) || port <= 0) fail('local 连接需要 --port <1-65535>');
+        connections.addConnection({ id, kind: 'local', name, port });
+        log.info(`已添加 local 连接 ${id}（端口 ${port}）`);
+      } else {
+        if (!url) fail('remote 连接需要 --url <https://...>');
+        connections.addConnection({ id, kind: 'remote', name, url, token });
+        log.info(`已添加 remote 连接 ${id}（${url}${token ? '，token 已配置' : '，无 token（交由外部认证）'}）`);
+      }
+      log.info(`文件：${connections.connectionsPath()}`);
+      return;
+    }
+    case 'use': {
+      const id = args[0];
+      if (!id) fail('connections use 需要 <id>');
+      connections.useConnection(id);
+      log.info(`激活连接 → ${id}（已写 .dsh-connection-changed 标记；launch-token 兼容层在启动时照写）`);
+      return;
+    }
+    case 'remove': {
+      const id = args[0];
+      if (!id) fail('connections remove 需要 <id>');
+      connections.removeConnection(id);
+      log.info(`已删除连接 ${id}`);
+      return;
+    }
+    default:
+      fail(`connections 未知子命令：${sub ?? '(空)'}（支持 list|add|use|remove）`);
   }
 }
 
@@ -387,6 +492,9 @@ export async function dispatch(args: string[]): Promise<void> {
       return;
     case 'profile':
       await runProfileCmd(args.slice(1));
+      return;
+    case 'connections':
+      await runConnections(args.slice(1));
       return;
     case 'start':
       await runStart(args.slice(1));
