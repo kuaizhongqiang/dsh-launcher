@@ -6,16 +6,15 @@
 // 停止 = 直接结束子进程（不再按端口找 PID）；启动器退出时自动停止 dsh。
 
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
-import { openSync, closeSync, existsSync, statSync, readSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync, openSync, closeSync, existsSync, statSync, readSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import * as consoleWin from './console.js';
 import * as log from './log.js';
 import * as node from './node.js';
 import { openURL } from './win.js';
 import type { Config } from './config.js';
-import { clearLaunchToken, launchTokenFilePath, readLaunchToken, tokenFromUrl, tokenUrlFromLogText, writeLaunchToken } from './tokenFile.js';
+import { clearLaunchToken, dshHome, launchTokenFilePath, readLaunchToken, redactTokenUrl, tokenFromUrl, tokenUrlFromLogText, writeLaunchToken } from './tokenFile.js';
 
 const readyTimeoutMs = 60_000;
 const pollIntervalMs = 500;
@@ -27,9 +26,21 @@ let child: ChildProcess | null = null;
 /** 本次 spawn 前的日志文件偏移：之后只读增量，旧进程打印的 token 不再干扰。 */
 let childLogOffset = 0;
 
-/** dsh 子进程 stdout/stderr 的落盘路径。 */
+/**
+ * dsh 子进程 stdout/stderr 的落盘路径(M0:自 %TEMP% 迁至 %DSH_HOME%/logs -
+ * 临时目录会被系统清理且权限语义弱;日志与 launch-token 同域管理)。
+ */
 export function childLogPath(): string {
-  return join(tmpdir(), 'dsh-launcher-child.log');
+  return join(dshHome(), 'logs', 'dsh-launcher-child.log');
+}
+
+/** 确保子进程日志所在目录存在(首次启动时 %DSH_HOME% 可能尚未创建)。 */
+function ensureChildLogDir(): void {
+  try {
+    mkdirSync(dirname(childLogPath()), { recursive: true });
+  } catch {
+    // 目录创建失败由后续 openSync 抛错暴露
+  }
 }
 
 /** 返回配置端口对应的访问地址。 */
@@ -181,7 +192,7 @@ async function openAccessUrl(cfg: Config, pid?: number): Promise<void> {
   try {
     await openURL(target);
     if (tokenUrl !== undefined) {
-      log.info(`已在默认浏览器打开带 token 的访问地址（自动登录，来源：${tokenSource}）：${target}`);
+      log.info(`已在默认浏览器打开带 token 的访问地址（自动登录，来源：${tokenSource}）：${redactTokenUrl(target)}`);
     } else {
       log.warn(`未获取到 token URL，已在默认浏览器打开 ${u}；若浏览器提示 "dsh web authentication required"，请重新运行启动器（dsh 重启后 token 会变化）`);
     }
@@ -243,6 +254,7 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   // 子进程输出写入日志文件；先记录当前偏移，之后只读本次进程的增量输出
   // （旧进程留在日志里的 token 不会干扰新进程的 token 提取）。
   try {
+    ensureChildLogDir();
     childLogOffset = statSync(childLogPath()).size;
   } catch {
     childLogOffset = 0;
@@ -304,7 +316,7 @@ export async function stop(cfg: Config): Promise<void> {
       try {
         await killPID(pid);
         // 子进程已结束：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
-        clearLaunchToken(pid);
+        clearLaunchToken('dsh-launcher', pid);
       } catch (e) {
         log.warn(`结束 PID ${pid} 失败：${(e as Error).message}`);
       }
@@ -333,7 +345,7 @@ export function stopChildSilently(): void {
   child = null;
   if (!pid) return;
   // 退出即停服务：其 launch token 随之失效，清理共享文件（pid 匹配才删）。
-  clearLaunchToken(pid);
+  clearLaunchToken('dsh-launcher', pid);
   try {
     execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
   } catch {
