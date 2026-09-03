@@ -85,6 +85,25 @@
         </div>
       </section>
 
+      <!-- 生态卡片（M2：清单 + 安装状态 + 一键拉齐） -->
+      <section class="card eco-card">
+        <div class="card-row">
+          <h2 class="card-title">生态</h2>
+          <span class="eco-meta" id="ecoMeta">读取中…</span>
+          <span class="action-spacer"></span>
+          <button class="btn btn-ghost btn-sm" id="btnEcoRefresh">刷新</button>
+        </div>
+        <p class="eco-state" id="ecoState">—</p>
+        <div class="eco-pkgs" id="ecoPkgs"></div>
+        <div class="eco-foot">
+          <label class="eco-chk"><input type="checkbox" id="ecoCore" checked> 含 core（未装时 install）</label>
+          <label class="eco-chk"><input type="checkbox" id="ecoSkills" checked> 含技能</label>
+          <span class="action-spacer"></span>
+          <button class="btn btn-sec btn-sm" id="btnEcoDry" disabled>仅校验（dry-run）</button>
+          <button class="btn btn-primary btn-sm" id="btnEcoPull" disabled>拉齐勾选项</button>
+        </div>
+      </section>
+
       <!-- 日志控制台 -->
       <section class="card log-panel">
         <div class="log" id="log" aria-live="polite"></div>

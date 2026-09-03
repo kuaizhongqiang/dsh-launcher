@@ -7,6 +7,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,6 +18,7 @@ import appJs from '../ui/app.js';
 import faviconSvg from '../ui/favicon.svg';
 
 import * as config from './config.js';
+import * as ecosystem from './ecosystem.js';
 import * as install from './install.js';
 import * as launch from './launch.js';
 import * as log from './log.js';
@@ -45,6 +47,9 @@ const updateState: UpdateState = {
   launcherLatest: '',
 };
 
+/** 生态拉齐是否正在执行（防并发触发；GET /api/ecosystem 暴露给前端）。 */
+let ecoPullBusy = false;
+
 // ---------- 桥接注入脚本（替换 window.launcherBridge 为真实 API） ----------
 
 const bridgeScript = `<script>
@@ -69,6 +74,8 @@ const bridgeScript = `<script>
     checkUpdate: function () { return api('/api/check-update', {}); },
     browse: function () { return api('/api/browse', {}).then(function (r) { return r.dir; }); },
     exit: function () { return api('/api/exit', {}); },
+    getEcosystem: function () { return api('/api/ecosystem'); },
+    pullEcosystem: function (opts) { return api('/api/ecosystem/pull', opts || {}); },
     defaultDir: ${JSON.stringify(defaultInstallDir())},
   };
   var es = new EventSource('/api/events');
@@ -356,6 +363,65 @@ async function handleApi(path: string, req: IncomingMessage, res: ServerResponse
       } finally {
         updateState.checking = false;
       }
+      return;
+    }
+    case '/api/ecosystem': {
+      // M2：生态页数据 = 当前清单（默认内嵌）+ ecosystem-state.json + 忙碌状态
+      try {
+        const { manifest, label } = await ecosystem.loadManifest();
+        let state: unknown = null;
+        try {
+          state = JSON.parse(readFileSync(ecosystem.ecosystemStatePath(), 'utf8'));
+        } catch {
+          state = null;
+        }
+        json(res, 200, {
+          ok: true,
+          busy: ecoPullBusy,
+          label,
+          manifest: {
+            dsh: manifest.dsh,
+            pluginsCommit: manifest.plugins.source.commit,
+            packages: manifest.plugins.packages.map((p) => ({ id: p.id, dir: p.dir })),
+            skills: !!manifest.skills,
+          },
+          state,
+          pluginsDir: ecosystem.pluginsRootDir(),
+        });
+      } catch (e) {
+        json(res, 500, { ok: false, message: errMessage(e) });
+      }
+      return;
+    }
+    case '/api/ecosystem/pull': {
+      // M2：触发生态拉齐（异步执行，进度经 /api/events SSE 推送；busy 期间 409）
+      if (ecoPullBusy) {
+        json(res, 409, { ok: false, message: '生态拉齐正在进行中，请稍候' });
+        return;
+      }
+      const body = await readBody(req);
+      const rawPlugins = body.plugins;
+      const plugins =
+        Array.isArray(rawPlugins) ? (rawPlugins as unknown[]).filter((x): x is string => typeof x === 'string') : undefined;
+      const opts: ecosystem.PullOptions = {
+        plugins,
+        skills: body.skills !== false,
+        core: body.core !== false,
+        dryRun: body.dryRun === true,
+      };
+      ecoPullBusy = true;
+      json(res, 200, { ok: true, message: '生态拉齐已开始（进度见下方日志）' });
+      void (async () => {
+        try {
+          log.info('生态拉齐开始（GUI 触发）……');
+          await ecosystem.runPull(opts);
+          log.info('生态拉齐完成。');
+        } catch (e) {
+          log.error(`生态拉齐失败：${errMessage(e)}`);
+        } finally {
+          ecoPullBusy = false;
+        }
+      })();
       return;
     }
     case '/api/browse': {
