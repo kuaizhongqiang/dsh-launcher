@@ -107,13 +107,13 @@ const PACKAGES: Array<{ id: string; dir: string; installPs1: string }> = [
   { id: 'dsh-deepseek', dir: 'plugins/dsh-deepseek-dsh-plugin', installPs1: 'c2877f16d912dc980fa0dd1a509ceb6356d42a2f77e230514070ad0abe7f09b8' },
   { id: 'dsh-credentials', dir: 'plugins/credentials-dsh-plugin', installPs1: 'e4d183d676ee2c2e5e6e9cd2bbb85cd37ec77171588ff4226cd60d7e7563214b' },
   { id: 'dsh-github', dir: 'plugins/github-dsh-plugin', installPs1: 'd69340d34628549cb793fc7600632ceeabdf23f1a3fed09bafb6b0afe0414254' },
-  { id: 'dsh-stock', dir: 'plugins/stock-dsh-plugin', installPs1: 'e20fed7cac47e4bb4d976dbc752d5c6dd735fc94c215c4920425ba7fe4731a89' },
+  { id: 'dsh-stock', dir: 'plugins/stock-dsh-plugin', installPs1: '0df09e35adde602c4e7be15c81c0f0ea162cd31ba064feb48a1a4bdda24b53b4' },
   { id: 'dsh-unity', dir: 'plugins/unity-mcp-dsh-plugin', installPs1: 'e76e308719dd22c804276e48584c6d5b3c16ce5a2c5a205f3b598165576e02a5' },
   { id: 'dsh-launcher', dir: 'plugins/dsh-launcher-dsh-plugin', installPs1: '044fefb6b5e720215e9a7f1f1a2a2bf14a4cb1c2904fad94cd2c67a04c34e03c' },
 ];
 
 /**
- * 默认清单（内嵌，随启动器走）：与 dsh-plugins 锁点 9f47279（新集合 11→7）对齐。
+ * 默认清单（内嵌，随启动器走）：与 dsh-plugins 锁点 79edc23（stock v0.2.0 时间模型）对齐。
  * 更新流程：在 dsh-plugins 新 commit 上重算各 install.ps1 sha256 → 同步本对象与仓库根 ecosystem.json。
  */
 export const DEFAULT_ECOSYSTEM: EcosystemManifest = {
@@ -122,7 +122,7 @@ export const DEFAULT_ECOSYSTEM: EcosystemManifest = {
   plugins: {
     source: {
       repo: 'https://github.com/kuaizhongqiang/dsh-plugins.git',
-      commit: '9f472797785a70cf78de0042f98e01d05ef927cb',
+      commit: '79edc23cf21df23b0d8ee9a550d1cd28fbccf8a8',
     },
     packages: PACKAGES.map((p) => ({
       id: p.id,
