@@ -125,10 +125,10 @@ export function gitProxyArgs(proxy: string | undefined): string[] {
   return ['-c', `http.proxy=${proxy}`, '-c', `https.proxy=${proxy}`];
 }
 
-/** 运行 git（.exe，无需 shell），流式输出可选，退出码非 0 抛错。 */
-function runGit(args: string[], onLine?: LineCallback): Promise<string> {
+/** 运行 git（.exe，无需 shell），流式输出可选，退出码非 0 抛错。cwd 可指定运行目录。 */
+export function runGit(args: string[], onLine?: LineCallback, cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const cp = spawn('git', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const cp = spawn('git', args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     const push = (chunk: Buffer) => {
       const s = chunk.toString('utf8');
@@ -328,6 +328,46 @@ export function runNpm(args: string[]): Promise<{ stdout: string; stderr: string
         return;
       }
       resolve({ stdout, stderr });
+    });
+  });
+}
+
+/**
+ * 执行 PowerShell 脚本（Windows 自带 powershell.exe：-NoProfile -ExecutionPolicy Bypass -File），
+ * 隐藏窗口、流式输出行回调；退出码非 0 抛错（附输出尾部）。插件 install.ps1 由此执行（M1 pull）。
+ */
+export function runPowerShellFile(
+  scriptAbs: string,
+  args: string[],
+  cwd: string,
+  onLine?: LineCallback,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cp = spawn(
+      'powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptAbs, ...args],
+      { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    const push = (chunk: Buffer) => {
+      const s = chunk.toString('utf8');
+      output += s;
+      if (onLine) {
+        for (const line of s.split(/\r?\n/)) {
+          if (line.trim()) onLine(line);
+        }
+      }
+    };
+    cp.stdout?.on('data', push);
+    cp.stderr?.on('data', push);
+    cp.on('error', reject);
+    cp.on('close', (code) => {
+      if (code !== 0) {
+        const tail = output.split(/\r?\n/).slice(-8).join('\n');
+        reject(new Error(`powershell ${scriptAbs} 退出码 ${code}\n${tail}`));
+        return;
+      }
+      resolve(output);
     });
   });
 }

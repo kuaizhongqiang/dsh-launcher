@@ -14,6 +14,7 @@
     "start": "node dist/launcher.cjs",
     "start:desktop": "electron .",
     "verify:m0": "node scripts/verify-m0.mjs",
+    "verify:m1": "node scripts/verify-m1.mjs",
     "dist": "node scripts/build.mjs && electron-builder --win portable --publish never",
     "dist:installer": "node scripts/build.mjs && electron-builder --win nsis --publish never",
     "dist:all": "node scripts/build.mjs && electron-builder --win portable nsis --publish never",
