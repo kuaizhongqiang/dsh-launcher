@@ -71,6 +71,13 @@ const mock = {
   },
   async useConnection(id) { await delay(300); return { ok: true, active: id }; },
   async restartDsh() { await delay(600); return { ok: true }; },
+  async setupFlow(opts) {
+    await delay(400);
+    streamEcoLogs();
+    streamInstallLogs();
+    await delay(2200);
+    return { ok: true };
+  },
 };
 
 const bridge = window.launcherBridge || mock;
@@ -570,6 +577,22 @@ async function onRestart() {
   setTimeout(() => { void refreshStatus(); }, 4000);
 }
 
+async function onSetup() {
+  if (state.busy) return;
+  if (!window.confirm('一键部署将执行：core 安装（如缺）→ 插件/技能拉齐 → 启动 dsh。\n继续？')) return;
+  setBusy(true);
+  log('一键部署开始（core → pull → 连接 → start）…', 'brand');
+  try {
+    const r = await bridge.setupFlow({});
+    if (!r || r.ok === false) throw new Error((r && r.message) || '部署失败');
+    log('一键部署已开始（进度见日志）。', 'ok');
+  } catch (e) {
+    log('一键部署失败：' + e.message, 'err');
+  }
+  setBusy(false);
+  setTimeout(() => { void refreshStatus(); void refreshEcosystem(); }, 5000);
+}
+
 function onExit() {
   log('dsh 绑定启动器运行：退出将同时停止 dsh。', 'dim');
   // 桌面窗口：通过 preload 关闭窗口（触发 main 的 closed → app.quit → 停止 dsh）
@@ -604,6 +627,7 @@ function onExit() {
   $('btnStart').addEventListener('click', onStart);
   $('btnStop').addEventListener('click', onStop);
   $('btnRestart').addEventListener('click', onRestart);
+  $('btnSetup').addEventListener('click', onSetup);
   $('btnInstall').addEventListener('click', onInstall);
   $('btnMove').addEventListener('click', onMove);
   $('btnBrowse').addEventListener('click', onBrowse);

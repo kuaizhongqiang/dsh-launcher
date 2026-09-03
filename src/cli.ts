@@ -10,6 +10,7 @@ import * as log from './log.js';
 import * as node from './node.js';
 import * as profile from './profile.js';
 import * as registration from './registration.js';
+import * as setup from './setup.js';
 import { DefaultUIPort, startServer } from './server.js';
 import * as update from './update.js';
 import { VERSION } from './version.js';
@@ -58,6 +59,11 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
                                     激活连接照写 launch-token.json（desktop 完全跟随 / vscode token 跟随）
   dsh-launcher.exe start [--no-browser] [--connection <id>]  按（或指定）激活连接启动：
                                     local=绑子进程启动（D8 端口锁）；remote=健康检查+带 token 开浏览器
+  dsh-launcher.exe setup [--manifest <url|file>] [--offline <目录>] [--connection <id>]
+                         [--profile-dir <pack> | --profile-in <file> --password <口令>]
+                         [--plugins a,b] [--no-start] [--all]
+                         新机器一条龙（M7）：core（缺口/离线）→ pull（插件+skills，lock 优先）
+                         → 个人层（可选）→ 连接 → start；--update-lock = 确认升级并写 lock（M8）
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
   dsh-launcher.exe --version | -v   显示版本
   dsh-launcher.exe --help | -h      显示本帮助
@@ -250,6 +256,31 @@ async function runStatus(): Promise<void> {
 }
 
 /** connections 子命令（M5）：list|add|use|remove。 */
+/** M7 setup:一条龙编排(core→pull→个人层→连接→start)。 */
+async function runSetupCmd(rest: string[]): Promise<void> {
+  const val = (flag: string, def = ''): string => {
+    const i = rest.indexOf(flag);
+    return i >= 0 && i + 1 < rest.length ? rest[i + 1] : def;
+  };
+  const known = new Set(['--all', '--manifest', '--offline', '--connection', '--profile-dir', '--profile-in', '--password', '--plugins', '--no-start', '--update-lock']);
+  for (const a of rest) {
+    if (a.startsWith('--') && !known.has(a)) fail(`setup 未知参数：${a}`);
+  }
+  const pluginsFlag = val('--plugins');
+  await setup.runSetup({
+    manifest: val('--manifest') || undefined,
+    offlineDir: val('--offline') || undefined,
+    profileDir: val('--profile-dir') || undefined,
+    profileIn: val('--profile-in') || undefined,
+    password: val('--password') || undefined,
+    connection: val('--connection') || undefined,
+    plugins: pluginsFlag ? pluginsFlag.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    noStart: rest.includes('--no-start'),
+    updateLock: rest.includes('--update-lock'),
+  });
+  log.info('一键部署流程结束。');
+}
+
 /** M6 restart:优先单实例转交(注册新鲜 + pid 存活 + api 健康 → REST bridge),否则本机执行。 */
 async function runRestart(): Promise<void> {
   const reg = registration.readRegistration();
@@ -349,6 +380,9 @@ async function runCheckUpdate(): Promise<void> {
       const { latest, hasUpdate } = await update.checkDsh(dshCur, spec, { source: cfg?.source, proxy: cfg?.proxy });
       if (hasUpdate) {
         console.log(`dsh：当前 ${dshCur} → 最新 ${latest}（可升级，运行 install 即升级到最新）`);
+        if (ecosystem.loadLock()) {
+          console.log('　　M8 lock 生效中：pull 默认收敛到 lock；确认升级请运行 pull --update-lock');
+        }
       } else {
         console.log(`dsh：当前 ${dshCur} 已是最新`);
       }
@@ -525,6 +559,9 @@ export async function dispatch(args: string[]): Promise<void> {
       return;
     case 'connections':
       await runConnections(args.slice(1));
+      return;
+    case 'setup':
+      await runSetupCmd(args.slice(1));
       return;
     case 'start':
       await runStart(args.slice(1));
