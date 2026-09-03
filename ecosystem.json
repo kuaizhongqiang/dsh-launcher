@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "dsh": {
+    "source": "github",
+    "version": "latest"
+  },
+  "plugins": {
+    "source": {
+      "repo": "https://github.com/kuaizhongqiang/dsh-plugins.git",
+      "commit": "15ffcfd77d391d6ba5fed8dc6285e6bb5ff0f72c"
+    },
+    "packages": [
+      { "id": "audio-read", "dir": "plugins/audio-read-dsh-plugin", "sha256": { "install.ps1": "8a7492b61b2500ed91a1bbe1f2e4a6118c27bce3dc1dab51b7bdd214040576c8" } },
+      { "id": "audio-speak", "dir": "plugins/audio-speak-dsh-plugin", "sha256": { "install.ps1": "00f1d463c43f302a6daa54c02d8345ee60be7e1c060d60ed10dd72d94380c627" } },
+      { "id": "credentials", "dir": "plugins/credentials-dsh-plugin", "sha256": { "install.ps1": "e4d183d676ee2c2e5e6e9cd2bbb85cd37ec77171588ff4226cd60d7e7563214b" } },
+      { "id": "deepseek-balance", "dir": "plugins/deepseek-balance-dsh-plugin", "sha256": { "install.ps1": "238e8f515221d67c955ccdf4d5a344c0549bb04701188758fe50380711b04730" } },
+      { "id": "deepseek-recharge", "dir": "plugins/deepseek-recharge-dsh-plugin", "sha256": { "install.ps1": "7a86c60a23d805032ae42d53c998ed8d3506efdd2c0b2527634841f7228b2ecf" } },
+      { "id": "describe-image", "dir": "plugins/describe-image-dsh-plugin", "sha256": { "install.ps1": "dda9bc1a6d8af3b3d71a0ca8ab6f9380671927747faf3f48cda54dbaafad2e3d" } },
+      { "id": "document-read", "dir": "plugins/document-read-dsh-plugin", "sha256": { "install.ps1": "bd86ca28a74c898b0299487d66e7ec91a468aa8ed72bb9cf8b999f720d7e1962" } },
+      { "id": "github", "dir": "plugins/github-dsh-plugin", "sha256": { "install.ps1": "d69340d34628549cb793fc7600632ceeabdf23f1a3fed09bafb6b0afe0414254" } },
+      { "id": "stock", "dir": "plugins/stock-dsh-plugin", "sha256": { "install.ps1": "e20fed7cac47e4bb4d976dbc752d5c6dd735fc94c215c4920425ba7fe4731a89" } },
+      { "id": "unity-mcp", "dir": "plugins/unity-mcp-dsh-plugin", "sha256": { "install.ps1": "e76e308719dd22c804276e48584c6d5b3c16ce5a2c5a205f3b598165576e02a5" } },
+      { "id": "video-read", "dir": "plugins/video-read-dsh-plugin", "sha256": { "install.ps1": "5c6ee57203857ced694f96e706564902ab4072aaf968191b5468f31bc5eb8ac2" } }
+    ]
+  },
+  "skills": {
+    "script": "skills/install-skills.ps1",
+    "sha256": "2fc2d4f396b1c5fc1c21437058bf473a107017698c3694511721ba3f7f61e96a"
+  }
+}

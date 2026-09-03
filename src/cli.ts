@@ -2,6 +2,7 @@
 // 移植自 Go main.go。无参数（双击 exe）→ 启动 Web UI 并打开浏览器。
 
 import * as config from './config.js';
+import * as ecosystem from './ecosystem.js';
 import * as install from './install.js';
 import * as launch from './launch.js';
 import * as log from './log.js';
@@ -29,6 +30,11 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
   dsh-launcher.exe stop             停止 dsh（结束绑定子进程，或按配置端口回退）
   dsh-launcher.exe status           显示安装目录、版本与运行状态
   dsh-launcher.exe check-update     检查升级：dsh（GitHub tag / npm registry）与启动器（GitHub Release）
+  dsh-launcher.exe pull [--manifest <url|file>] [--plugins a,b] [--all] [--no-core] [--no-skills] [--dry-run]
+                                    按 ecosystem.json 清单补齐生态：core 缺口（走 install）+
+                                    插件 install.ps1（逐个）+ 技能 install-skills.ps1
+                                    结果写 ecosystem-state.json；默认清单内嵌随启动器走
+                                    （--manifest 远程仅 https；供应链 sha256 强制校验，P1-7）
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
   dsh-launcher.exe --version | -v   显示版本
   dsh-launcher.exe --help | -h      显示本帮助
@@ -249,6 +255,53 @@ async function runUI(rest: string[]): Promise<void> {
   await new Promise<void>(() => {});
 }
 
+/** pull 子命令参数（M1 / Phase 1）。 */
+interface PullArgs {
+  manifest?: string;
+  plugins?: string[] | null;
+  skills?: boolean;
+  core?: boolean;
+  dryRun?: boolean;
+}
+
+function parsePullArgs(rest: string[]): PullArgs {
+  const a: PullArgs = {};
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i];
+    switch (t) {
+      case '--manifest':
+        if (i + 1 >= rest.length) fail('--manifest 缺少参数');
+        a.manifest = rest[++i];
+        break;
+      case '--plugins': {
+        if (i + 1 >= rest.length) fail('--plugins 缺少参数');
+        a.plugins = rest[++i].split(',').map((s) => s.trim()).filter(Boolean);
+        break;
+      }
+      case '--all':
+        break; // 默认即 core+全部插件+技能，--all 为显式全量
+      case '--no-core':
+        a.core = false;
+        break;
+      case '--no-skills':
+        a.skills = false;
+        break;
+      case '--dry-run':
+        a.dryRun = true;
+        break;
+      default:
+        fail(`pull 未知参数：${t}`);
+    }
+  }
+  return a;
+}
+
+async function runPullCmd(rest: string[]): Promise<void> {
+  const a = parsePullArgs(rest);
+  await ecosystem.runPull(a);
+  log.info('生态拉齐流程结束（细节见 ecosystem-state.json）。');
+}
+
 export async function dispatch(args: string[]): Promise<void> {
   if (args.length === 0) {
     await runUI([]);
@@ -269,6 +322,9 @@ export async function dispatch(args: string[]): Promise<void> {
       return;
     case 'move':
       await runMove(args.slice(1));
+      return;
+    case 'pull':
+      await runPullCmd(args.slice(1));
       return;
     case 'start':
       await runStart(args.slice(1));
