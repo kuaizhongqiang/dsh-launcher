@@ -2,7 +2,7 @@
 // 校验并写入 launcher.json；以及 move（移动安装目录）。
 // 移植自 Go internal/install（install.go + move.go）。
 
-import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -19,6 +19,8 @@ export interface InstallOptions {
   version?: string;
   /** GitHub 访问代理（git 的 http.proxy/https.proxy）。 */
   proxy?: string;
+  /** 离线包目录（M3/Phase 3）：内含 dsh/ 与可选 runtime/，直接本地安装，不依赖网络/git/pnpm。 */
+  offlineDir?: string;
 }
 
 /** 默认安装目录：%LOCALAPPDATA%\dsh。 */
@@ -26,13 +28,72 @@ export function defaultInstallDir(): string {
   return process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'dsh') : join(homedir(), 'AppData', 'Local', 'dsh');
 }
 
-/** 统一入口：按 source 分发（github 默认 / npm 保留）。 */
+/** 统一入口：按 source 分发（github 默认 / npm 保留）；offlineDir 优先走离线安装。 */
 export async function run(dir: string, spec: node.RegistrySpec, opts: InstallOptions = {}): Promise<void> {
+  if (opts.offlineDir) {
+    await runOfflineInstall(dir, opts.offlineDir);
+    return;
+  }
   if (opts.source === 'npm') {
     await runNpmInstall(dir, spec);
     return;
   }
   await runGithubInstall(dir, opts);
+}
+
+/**
+ * 离线包安装（M3 / Phase 3，真·零依赖）：直接消费本地 offline/ 目录——
+ *   offline/dsh/           dsh 安装内容（npm 布局 node_modules/@deepseek-ai/dsh 或 github 布局 deepseek-harness，按内容判定）
+ *   offline/runtime/       （可选）便携 Node（node.exe + 旁件），落位 %LOCALAPPDATA%\dsh\runtime
+ * 不触发任何网络 / git / pnpm。
+ */
+export async function runOfflineInstall(dir: string, offlineDir: string): Promise<void> {
+  const bundle = resolve(offlineDir);
+  const core = join(bundle, 'dsh');
+  if (!existsSync(core)) throw new Error(`离线包缺少 dsh 目录：${core}`);
+  const abs = resolve(dir || defaultInstallDir());
+  log.info(`离线包安装：${bundle} → ${abs}`);
+  // 1. 清空旧安装并复制 dsh 内容（与 github 源克隆行为一致：重装即换）
+  rmSync(abs, { recursive: true, force: true });
+  mkdirSync(abs, { recursive: true });
+  cpSync(core, abs, { recursive: true });
+
+  // 2. 判定布局并校验
+  const source: node.DshSource = existsSync(join(core, 'deepseek-harness')) ? 'github' : 'npm';
+  const bin = node.dshBinPath(abs, source);
+  if (!existsSync(bin)) {
+    throw new Error(`离线包布局不符：找不到 ${bin}（预期 offline/dsh 内含 npm 布局 node_modules/@deepseek-ai/dsh 或 github 布局 deepseek-harness）`);
+  }
+  let ver: string;
+  try {
+    ver = await node.dshVersion(abs, source);
+  } catch (e) {
+    log.warn(`bin.js --version 校验失败（${(e as Error).message}），回退读取 package.json`);
+    ver = node.dshVersionFromPackage(abs, source);
+  }
+  log.info(`dsh 校验通过（离线包，${source} 布局）：${ver}`);
+
+  // 3. 便携 Node runtime 落位（可选）
+  const bundleRuntime = join(bundle, 'runtime');
+  if (existsSync(join(bundleRuntime, 'node.exe'))) {
+    mkdirSync(node.runtimeRoot(), { recursive: true });
+    cpSync(bundleRuntime, node.runtimeRoot(), { recursive: true });
+    log.info(`便携 Node runtime 已落位：${node.portableNodeExe()}`);
+  } else {
+    log.warn('离线包未含 runtime/node.exe：启动时仍将使用系统 Node 或自动下载便携 Node（M3）');
+  }
+
+  // 4. 写入 launcher.json
+  const cfg: config.Config = {
+    dshInstallDir: abs,
+    dshVersion: ver,
+    port: config.DefaultPort,
+    installedAt: new Date().toISOString(),
+    source,
+  };
+  config.save(cfg);
+  log.info(`配置已写入 ${config.configPath()}`);
+  log.info('完成。之后可运行 dsh-launcher.exe start（dsh 启动将使用便携/系统 Node）。');
 }
 
 /** GitHub 源码安装：探测环境 → 解析 tag → 浅克隆 → pnpm 构建 → 校验 → 写配置。 */

@@ -2,8 +2,9 @@
 // 移植自 Go internal/node。
 
 import { spawn, execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { compareSemver, parseSemver, type Semver } from './semver.js';
 /** npm 包名。 */
 export const DshPackage = '@deepseek-ai/dsh';
@@ -483,4 +484,157 @@ export function dshVersionFromPackage(installDir: string, source?: DshSource): s
   const p = JSON.parse(data) as { version?: string };
   if (!p.version) throw new Error('package.json 缺少 version 字段');
   return p.version;
+}
+
+// ---------- 运行时自持（M3 / Phase 3）：便携 Node + PATH 注入 ----------
+
+/** 便携 Node 固定版本（win-x64 zip；可被 DSH_LAUNCHER_NODE_VERSION 覆盖）。 */
+export const DefaultRuntimeNodeVersion = '24.4.0';
+
+/** 运行时根目录：%LOCALAPPDATA%\dsh\runtime（DSH_LAUNCHER_RUNTIME_DIR 可覆盖，测试用）。 */
+export function runtimeRoot(): string {
+  if (process.env.DSH_LAUNCHER_RUNTIME_DIR) return process.env.DSH_LAUNCHER_RUNTIME_DIR;
+  const base = process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'dsh') : join(homedir(), 'AppData', 'Local', 'dsh');
+  return join(base, 'runtime');
+}
+
+/** 便携 node.exe 路径。 */
+export function portableNodeExe(): string {
+  return join(runtimeRoot(), 'node.exe');
+}
+
+/** 运行 `<exe> --version` 并判断是否满足 dsh 要求（^22.19 || >=24）。 */
+export async function nodeExeOk(exe: string): Promise<boolean> {
+  try {
+    const { stdout } = await run(exe, ['--version']);
+    const v = parseVersion(stdout);
+    return v !== null && versionCompatible(v);
+  } catch {
+    return false;
+  }
+}
+
+/** 系统 PATH 中的 node 是否满足要求。 */
+export async function systemNodeOk(): Promise<boolean> {
+  return nodeExeOk('node');
+}
+
+/** 递归查找文件（解压后的 node.exe 定位用）。 */
+function findFileRecursive(dir: string, name: string): string | undefined {
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const hit = findFileRecursive(p, name);
+        if (hit) return hit;
+      } else if (entry.name === name) {
+        return p;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
+
+/** 解压 zip 到目录：优先系统 tar（Windows 10+ 原生支持 zip），回退 PowerShell Expand-Archive。 */
+async function extractZip(zip: string, target: string): Promise<void> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile('tar', ['-xf', zip, '-C', target], { windowsHide: true }, (err) => (err ? reject(err) : resolve()));
+    });
+    return;
+  } catch {
+    /* fallthrough */
+  }
+  await new Promise<void>((resolve, reject) => {
+    const ps = `Expand-Archive -LiteralPath '${zip.replace(/'/g, "''")}' -DestinationPath '${target.replace(/'/g, "''")}' -Force`;
+    execFile('powershell', ['-NoProfile', '-Command', ps], { windowsHide: true }, (err) => (err ? reject(err) : resolve()));
+  });
+}
+
+/**
+ * 确保便携 Node 就绪（M3）：runtimeRoot/node.exe 存在且满足版本 → 复用；
+ * 否则从 mirror 下载 node-v<version>-win-x64.zip 并解压提升到 runtimeRoot/node.exe。
+ * mirror 缺省 https://nodejs.org/dist；也接受本地路径（离线包/测试，直接复制 zip）。
+ * DSH_LAUNCHER_RUNTIME_FAKE=1 时跳过 exe 可执行校验（供测试用假 node.exe）。
+ */
+export async function ensureRuntimeNode(opts: { version?: string; mirror?: string } = {}): Promise<string> {
+  const version = opts.version || process.env.DSH_LAUNCHER_NODE_VERSION || DefaultRuntimeNodeVersion;
+  const root = runtimeRoot();
+  mkdirSync(root, { recursive: true });
+  const exe = portableNodeExe();
+  if (existsSync(exe)) {
+    if (process.env.DSH_LAUNCHER_RUNTIME_FAKE === '1' || (await nodeExeOk(exe))) return exe;
+    rmSync(exe, { force: true }); // 版本不满足：删掉重建
+  }
+  const mirror = opts.mirror || process.env.DSH_LAUNCHER_NODE_MIRROR || 'https://nodejs.org/dist';
+  const zipName = `node-v${version}-win-x64.zip`;
+  const stage = join(root, `.stage-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+  mkdirSync(stage, { recursive: true });
+  const isLocal = /^[a-zA-Z]:[\\/]/.test(mirror) || mirror.startsWith('file://');
+  try {
+    const zipPath = join(stage, zipName);
+    if (isLocal) {
+      const base = mirror.startsWith('file://') ? mirror.slice('file://'.length) : mirror;
+      const src = join(base, zipName);
+      if (!existsSync(src)) throw new Error(`本地 Node 镜像缺少 ${src}`);
+      cpSync(src, zipPath);
+    } else {
+      const url = `${mirror.replace(/\/+$/, '')}/v${version}/${zipName}`;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 120_000);
+      try {
+        const resp = await fetch(url, { signal: ctrl.signal });
+        if (resp.status !== 200) throw new Error(`下载便携 Node 失败：HTTP ${resp.status}（${url}）`);
+        const buf = Buffer.from(await resp.arrayBuffer());
+        mkdirSync(dirname(zipPath), { recursive: true });
+        rmSync(zipPath, { force: true });
+        await import('node:fs/promises').then(({ writeFile }) => writeFile(zipPath, buf));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    const extractDir = join(stage, 'x');
+    mkdirSync(extractDir, { recursive: true });
+    await extractZip(zipPath, extractDir);
+    const found = findFileRecursive(extractDir, 'node.exe');
+    if (!found) throw new Error(`解压后未找到 node.exe（${zipName}）`);
+    rmSync(exe, { force: true });
+    cpSync(found, exe);
+    if (process.env.DSH_LAUNCHER_RUNTIME_FAKE === '1') return exe;
+    if (!(await nodeExeOk(exe))) throw new Error(`便携 Node 校验失败：${exe}`);
+    return exe;
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+/**
+ * 解析启动 dsh 用的 node 可执行（M3）：
+ * DSH_LAUNCHER_NODE_EXE（显式，测试）> 便携 runtime（已就绪）> 系统 node（满足要求）> 下载便携 runtime。
+ */
+export async function resolveNodeExe(): Promise<{ cmd: string; portable: boolean }> {
+  const explicit = process.env.DSH_LAUNCHER_NODE_EXE;
+  if (explicit) return { cmd: explicit, portable: false };
+  const portable = portableNodeExe();
+  if (existsSync(portable)) {
+    if (process.env.DSH_LAUNCHER_RUNTIME_FAKE === '1' || (await nodeExeOk(portable))) return { cmd: portable, portable: true };
+  }
+  if (await systemNodeOk()) return { cmd: 'node', portable: false };
+  const exe = await ensureRuntimeNode();
+  return { cmd: exe, portable: true };
+}
+
+/** dsh 子进程环境：便携 runtime 时把其目录插到 PATH 最前（dsh 及其工具链子进程可见），不污染系统。 */
+export function childEnvForNode(cmd: string): NodeJS.ProcessEnv {
+  if (cmd === 'node') return process.env;
+  const dir = dirname(cmd);
+  const path = process.env.PATH ? dir + ';' + process.env.PATH : dir;
+  return { ...process.env, PATH: path };
+}
+
+/** 运行时目录中是否有就绪的便携 node（供安装/UI 决策）。 */
+export function portableNodeReady(): boolean {
+  return existsSync(portableNodeExe());
 }

@@ -261,11 +261,18 @@ export async function start(cfg: Config, noBrowser: boolean): Promise<boolean> {
   }
   const childLog = openSync(childLogPath(), 'a');
 
+  // M3 运行时自持：优先便携 runtime，其次系统 node（满足版本），都没有才下载便携 Node。
+  // 子进程继承其目录 PATH（dsh 及其工具链子进程可见），不污染系统。
+  const { cmd: nodeCmd, portable: nodePortable } = await node.resolveNodeExe();
+  if (nodePortable) log.info(`使用便携 Node runtime：${nodeCmd}`);
+  const nodeEnv = node.childEnvForNode(nodeCmd);
+
   await new Promise<void>((resolve, reject) => {
     // 显式传 --port：dsh web 监听 launcher.json 配置的端口（而非 dsh 自己的默认值）；
     // 传 --no-open：浏览器由 launcher 统一控制打开，避免 dsh 自开一次 + launcher 再开一次。
     const args = [bin, 'web', '--port', String(cfg.port), '--no-open'];
-    const cp = spawn('node', args, {
+    const cp = spawn(nodeCmd, args, {
+      env: nodeEnv,
       // 不 detached：作为本进程子进程，继承（隐藏）控制台。
       // stdio 指向日志文件（无控制台时绝不能继承无效句柄）。
       stdio: ['ignore', childLog, childLog],
