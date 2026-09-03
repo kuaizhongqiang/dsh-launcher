@@ -17,6 +17,7 @@
     "verify:m1": "node scripts/verify-m1.mjs",
     "verify:m2": "node scripts/verify-m2.mjs",
     "verify:m3": "node scripts/verify-m3.mjs",
+    "verify:m4": "node scripts/verify-m4.mjs",
     "dist": "node scripts/build.mjs && electron-builder --win portable --publish never",
     "dist:installer": "node scripts/build.mjs && electron-builder --win nsis --publish never",
     "dist:all": "node scripts/build.mjs && electron-builder --win portable nsis --publish never",

@@ -7,6 +7,7 @@ import * as install from './install.js';
 import * as launch from './launch.js';
 import * as log from './log.js';
 import * as node from './node.js';
+import * as profile from './profile.js';
 import { DefaultUIPort, startServer } from './server.js';
 import * as update from './update.js';
 import { VERSION } from './version.js';
@@ -39,6 +40,13 @@ const usage = `dsh-launcher — dsh 本机安装 / 启动引导器（TS/JS 版�
                                     插件 install.ps1（逐个）+ 技能 install-skills.ps1
                                     结果写 ecosystem-state.json；默认清单内嵌随启动器走
                                     （--manifest 远程仅 https；供应链 sha256 强制校验，P1-7）
+  dsh-launcher.exe profile push --dir <pack目录> [--exclude a,b]  个人层 push：白名单（settings.yaml /
+                                    补丁 / profiles/web/plugins / skills / 自选+reports）镜像进 pack
+  dsh-launcher.exe profile pull --dir <pack目录>  从 pack 恢复到本机（红线文件永不恢复，D2）
+  dsh-launcher.exe profile export --out <文件> [--password <口令>]
+  dsh-launcher.exe profile import --in <文件> [--password <口令>]
+                                    导出/导入加密个人层（AES-256-GCM + scrypt；口令默认取
+                                    环境变量 DSH_LAUNCHER_PROFILE_PASSWORD）
   dsh-launcher.exe ui [--no-browser] [--port <端口>]  启动 Web UI 服务（默认端口 ${DefaultUIPort}）
   dsh-launcher.exe --version | -v   显示版本
   dsh-launcher.exe --help | -h      显示本帮助
@@ -307,6 +315,46 @@ function parsePullArgs(rest: string[]): PullArgs {
   return a;
 }
 
+async function runProfileCmd(rest: string[]): Promise<void> {
+  const sub = rest[0];
+  const args = rest.slice(1);
+  const val = (flag: string, def = ''): string => {
+    const i = args.indexOf(flag);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : def;
+  };
+  switch (sub) {
+    case 'push': {
+      const dir = val('--dir');
+      if (!dir) fail('profile push 需要 --dir <pack目录>');
+      const exclude = val('--exclude').split(',').map((s) => s.trim()).filter(Boolean);
+      profile.pushProfilePack(dir, exclude);
+      return;
+    }
+    case 'pull': {
+      const dir = val('--dir');
+      if (!dir) fail('profile pull 需要 --dir <pack目录>');
+      profile.pullProfilePack(dir);
+      return;
+    }
+    case 'export': {
+      const out = val('--out');
+      if (!out) fail('profile export 需要 --out <文件>');
+      const pwd = val('--password');
+      profile.exportProfilePack(out, pwd || undefined);
+      return;
+    }
+    case 'import': {
+      const infile = val('--in');
+      if (!infile) fail('profile import 需要 --in <文件>');
+      const pwd = val('--password');
+      profile.importProfilePack(infile, pwd || undefined);
+      return;
+    }
+    default:
+      fail(`profile 未知子命令：${sub ?? '(空)'}（支持 push|pull|export|import）`);
+  }
+}
+
 async function runPullCmd(rest: string[]): Promise<void> {
   const a = parsePullArgs(rest);
   await ecosystem.runPull(a);
@@ -336,6 +384,9 @@ export async function dispatch(args: string[]): Promise<void> {
       return;
     case 'pull':
       await runPullCmd(args.slice(1));
+      return;
+    case 'profile':
+      await runProfileCmd(args.slice(1));
       return;
     case 'start':
       await runStart(args.slice(1));
