@@ -103,13 +103,13 @@ export interface PullOptions {
 
 /** 新集合 7 包(PM4 / §8 11→7):id、包目录、install.ps1 sha256。 */
 const PACKAGES: Array<{ id: string; dir: string; installPs1: string }> = [
-  { id: 'dsh-media', dir: 'plugins/dsh-media-dsh-plugin', installPs1: 'e68cef3631761e1dc0c49c18421b716524b7584d979911ac1887a427bcbbfdd9' },
-  { id: 'dsh-deepseek', dir: 'plugins/dsh-deepseek-dsh-plugin', installPs1: 'c2877f16d912dc980fa0dd1a509ceb6356d42a2f77e230514070ad0abe7f09b8' },
+  { id: 'dsh-media', dir: 'plugins/dsh-media-dsh-plugin', installPs1: 'fc8d4ce29486c03079e071138e9f2fcad809e843c699d22c989b7784fd4d91e3' },
+  { id: 'dsh-deepseek', dir: 'plugins/dsh-deepseek-dsh-plugin', installPs1: '64821f594bb58516bce53ad9de2470b36ea1e1b115092b8855e3d45fabe7b59f' },
   { id: 'dsh-credentials', dir: 'plugins/credentials-dsh-plugin', installPs1: 'e4d183d676ee2c2e5e6e9cd2bbb85cd37ec77171588ff4226cd60d7e7563214b' },
   { id: 'dsh-github', dir: 'plugins/github-dsh-plugin', installPs1: 'd69340d34628549cb793fc7600632ceeabdf23f1a3fed09bafb6b0afe0414254' },
   { id: 'dsh-stock', dir: 'plugins/stock-dsh-plugin', installPs1: 'e20fed7cac47e4bb4d976dbc752d5c6dd735fc94c215c4920425ba7fe4731a89' },
   { id: 'dsh-unity', dir: 'plugins/unity-mcp-dsh-plugin', installPs1: 'e76e308719dd22c804276e48584c6d5b3c16ce5a2c5a205f3b598165576e02a5' },
-  { id: 'dsh-launcher', dir: 'plugins/dsh-launcher-dsh-plugin', installPs1: '044fefb6b5e720215e9a7f1f1a2a2bf14a4cb1c2904fad94cd2c67a04c34e03c' },
+  { id: 'dsh-launcher', dir: 'plugins/dsh-launcher-dsh-plugin', installPs1: '5b317ae4981dae20201efce32fe9c09290c4ae5ad6b6d9292834c663d5bba2fc' },
 ];
 
 /**
@@ -122,7 +122,7 @@ export const DEFAULT_ECOSYSTEM: EcosystemManifest = {
   plugins: {
     source: {
       repo: 'https://github.com/kuaizhongqiang/dsh-plugins.git',
-      commit: '9f472797785a70cf78de0042f98e01d05ef927cb',
+      commit: '360d1fffeb3a2a2399a0a56e2d8d92b415f0f0da',
     },
     packages: PACKAGES.map((p) => ({
       id: p.id,
