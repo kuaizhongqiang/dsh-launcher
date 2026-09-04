@@ -460,6 +460,7 @@ async function refreshEcosystem() {
     box.appendChild(label);
   }
   renderEcoButtons();
+  scheduleAutoSize();
   return d;
 }
 
@@ -537,6 +538,7 @@ async function refreshConnections() {
   );
   const has = [...sel.options].some((o) => o.value === active);
   sel.value = has ? active : sel.options.length ? sel.options[0].value : '';
+  scheduleAutoSize();
 }
 
 async function onConnUse() {
@@ -606,6 +608,39 @@ function onExit() {
   }
 }
 
+/* ---------- 桌面窗口内容自适应（#20 界面高度不够） ---------- */
+
+/**
+ * 量出页面自然总高度（标题栏 + 内容），请求主进程把窗口扩到刚好放下全部内容。
+ * 测量时临时解除 .content 的伸缩/滚动约束，读 offsetHeight 后立即还原（同一帧内完成，无闪烁）。
+ * 小屏放不下时主进程保持窗口上限，由 body.desktop .content 内滚动兜底。
+ */
+function desktopAutoSize() {
+  const ew = window.electronWindow;
+  if (!ew || typeof ew.autosize !== 'function') return;
+  const content = document.querySelector('main.content');
+  const title = document.querySelector('.titlebar');
+  if (!content || !title) return;
+  const prevFlex = content.style.flex;
+  const prevOverflow = content.style.overflow;
+  content.style.flex = '0 0 auto';
+  content.style.overflow = 'visible';
+  let h = 0;
+  try {
+    h = content.offsetHeight + title.offsetHeight;
+  } finally {
+    content.style.flex = prevFlex;
+    content.style.overflow = prevOverflow;
+  }
+  if (h > 0) ew.autosize(h + 8); // +8 兜底行高/字体取整
+}
+
+let autoSizeTimer = 0;
+function scheduleAutoSize() {
+  clearTimeout(autoSizeTimer);
+  autoSizeTimer = setTimeout(desktopAutoSize, 120);
+}
+
 /* ---------- 启动 ---------- */
 
 (async function init() {
@@ -664,6 +699,8 @@ function onExit() {
   void refreshEcosystem();
   // 连接列表首载（M5）
   void refreshConnections();
+  // #20：首帧数据就绪后让窗口按内容自适应（生态/连接异步完成时各自再调度一次）
+  scheduleAutoSize();
 })();
 
 /* ---------- 真实后端契约（Node SEA 版，由服务端注入） ----------

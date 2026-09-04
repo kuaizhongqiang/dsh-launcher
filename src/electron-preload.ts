@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('electronWindow', {
   minimize: () => ipcRenderer.send('win:minimize'),
   hide: () => ipcRenderer.send('win:hide'),
   close: () => ipcRenderer.send('win:close'),
+  // #20：请求主进程按内容自然高度扩窗（invoke → ipcMain.handle('win:autosize')）
+  autosize: (desiredH: number) => ipcRenderer.invoke('win:autosize', desiredH),
 });

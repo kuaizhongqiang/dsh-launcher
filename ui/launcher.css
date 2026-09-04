@@ -242,7 +242,8 @@ body {
 
 body.desktop {
   padding: 0;
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 
 body.desktop .app-window {
@@ -252,6 +253,17 @@ body.desktop .app-window {
   border-radius: 0;
   border: none;
   box-shadow: none;
+  /* #20：纵向弹性布局，让 .content 能伸缩滚动 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* #20 界面高度不够：窗口高度与内容自然高度自适应（主进程 win:autosize）后，
+   普通屏幕正好全部放下；小屏（内容超高）时中部滚动，任何操作/日志都不再被静默裁掉。 */
+body.desktop .content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 body.desktop .proto-badge {

@@ -3,8 +3,10 @@
 // 带 CLI 参数 → 与命令行版一致（install/start/stop/restart/move/status/check-update/connections/profile/pull）。
 // M6:托盘常驻(启停/重启/开浏览器/连接切换/检查更新/退出)、关窗=隐藏到托盘(默认,launcher.json
 // closeAction:'exit' 保留旧「关窗即停」)。
+// #21:桌面模式单实例锁——重复启动只保留一个进程/一个托盘图标,后来者退出并让已有窗口回前台。
+// #20:窗口高度随内容自适应(win:autosize,上限=工作区),小屏由 CSS 内滚动兜底,底部操作不再被裁。
 
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, screen, shell, Tray } from 'electron';
 import { dirname, join } from 'node:path';
 
 import { dispatch } from './cli.js';
@@ -34,6 +36,9 @@ const KNOWN_COMMANDS = new Set([
 /** 退出语义标志：true 时关闭窗口 = 真退出（UI「退出」按钮 / 托盘退出）。 */
 let quitting = false;
 
+/** 桌面窗口内容自适应的高度上限（主屏工作区高度 − 边距；runDesktop 内按实测定）。 */
+let desktopMaxH = 720;
+
 /** 清洗 argv：去掉 exe 路径、可能的 app 路径（dev 模式 `electron .`）与 Chromium 开关。 */
 function cleanArgs(raw: string[]): string[] {
   const args = raw.slice(1).filter((a) => {
@@ -49,9 +54,29 @@ function cleanArgs(raw: string[]): string[] {
 
 /** 窗口模式：启动服务 + 创建 frameless 桌面窗口。 */
 async function runDesktop(): Promise<void> {
+  // 单实例锁（#21，仅桌面窗口模式）：
+  // 双击/重复启动时若已有实例持锁，本进程直接退出——否则每个进程都会新建托盘图标、
+  // 各自抢占一个 UI 端口，托盘里出现两个 launcher。持锁方收到 second-instance 时把窗口带回前台。
+  // CLI 模式（install/start/restart…）不经过这里，不抢锁，可与常驻窗口并存。
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  let mainWin: BrowserWindow | null = null;
+  app.on('second-instance', () => {
+    if (!mainWin || mainWin.isDestroyed()) return;
+    if (mainWin.isMinimized()) mainWin.restore();
+    mainWin.show();
+    mainWin.focus();
+  });
+
   await app.whenReady();
   log.initLog();
   log.setDebug(process.env.DSH_LAUNCHER_DEBUG !== undefined);
+
+  // #20 内容自适应上限：主屏工作区高度 − 边距（小屏留出内滚动兜底空间）
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  desktopMaxH = Math.max(560, workArea.height - 20);
 
   // 持有隐藏控制台：dsh 作为子进程继承后，其 pwsh 子进程不再弹窗。
   // 必须尽早调用（在 /api/start 真正 spawn 之前）。
@@ -95,7 +120,8 @@ async function runDesktop(): Promise<void> {
 
   const win = new BrowserWindow({
     width: 720,
-    height: 700, // v0.5.1：内容（含版本选择行）变高，拉长避免底部按钮被切
+    // 初始 700；渲染就绪后经 win:autosize 按内容自然高度扩窗（≤ desktopMaxH）
+    height: Math.min(700, desktopMaxH),
     frame: false, // 无边框：自绘标题栏（与 Go 版一致）
     resizable: false,
     show: false,
@@ -106,6 +132,7 @@ async function runDesktop(): Promise<void> {
       nodeIntegration: false,
     },
   });
+  mainWin = win;
 
   // 外链一律走系统浏览器（不占用窗口）
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -131,7 +158,10 @@ async function runDesktop(): Promise<void> {
     }
   });
 
-  win.on('closed', () => app.quit());
+  win.on('closed', () => {
+    mainWin = null;
+    app.quit();
+  });
 
   // ---------- 托盘（M6） ----------
 
@@ -189,14 +219,26 @@ async function runDesktop(): Promise<void> {
     return 'dim';
   };
 
-  const tray = new Tray(nativeImage.createFromBuffer(trayPng('dim')));
+  // 托盘图标:透明底状态圆点(16@1x + 32@2x,高分屏不糊);addRepresentation 失败时退回单图。
+  const trayImage = (state: TrayState): ReturnType<typeof nativeImage.createEmpty> => {
+    try {
+      const img = nativeImage.createEmpty();
+      img.addRepresentation({ scaleFactor: 1, width: 16, height: 16, buffer: trayPng(state, 16) });
+      img.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: trayPng(state, 32) });
+      return img;
+    } catch {
+      return nativeImage.createFromBuffer(trayPng(state, 16));
+    }
+  };
+
+  const tray = new Tray(trayImage('dim'));
   const rebuildTray = async (): Promise<void> => {
     try {
       const cfg = config.load();
       const installed = !!cfg && config.isInstalled(cfg);
       const { conn: active } = connections.resolveActive(cfg);
       const st = await trayState();
-      tray.setImage(nativeImage.createFromBuffer(trayPng(st)));
+      tray.setImage(trayImage(st));
       const tip =
         st === 'green' ? 'dsh 运行中' : st === 'yellow' ? 'dsh 运行中（有更新）' : st === 'red' ? 'dsh 异常' : 'dsh 未运行';
       tray.setToolTip(`dsh-launcher v${VERSION} — ${tip}`);
@@ -302,6 +344,21 @@ async function runDesktop(): Promise<void> {
 /** 窗口控制 IPC（最小化/隐藏/关闭），供 preload 使用。 */
 ipcMain.on('win:minimize', (e) => {
   BrowserWindow.fromWebContents(e.sender)?.minimize();
+});
+
+/**
+ * #20 内容自适应高度：渲染进程量好页面自然高度（标题栏 + 内容）后请求扩窗。
+ * 只增不减（避免数据加载/日志增长引起窗口反复跳动），且不超过主屏工作区；
+ * 屏幕放不下时保持窗口上限，由 body.desktop .content 内滚动兜底（不再裁掉底部操作）。
+ */
+ipcMain.handle('win:autosize', (_e, desiredH: unknown) => {
+  const h = Math.round(Number(desiredH));
+  if (!Number.isFinite(h) || h <= 0) return;
+  const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed());
+  if (!w) return;
+  const [cw, ch] = w.getSize();
+  const target = Math.min(Math.max(ch, h), desktopMaxH);
+  if (target !== ch) w.setSize(cw, target);
 });
 
 ipcMain.on('win:hide', (e) => {
